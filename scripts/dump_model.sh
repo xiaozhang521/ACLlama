@@ -1,20 +1,20 @@
 NCCL_P2P_DISABLE=1 \
 NCCL_IB_DISABLE=1 \
-CUDA_VISIBLE_DEVICES=1,3 \
+CUDA_VISIBLE_DEVICES=6 \
 torchrun \
---nproc_per_node 2 \
+--nproc_per_node 1 \
 --nnodes 1 \
 --node_rank 0 \
 --master_addr localhost \
 --master_port 6601 \
-../finetune_acllama.py \
+../dump_model.py \
 --audio_model_name_or_path "/mnt/user/zhangyuhao/speechLLM/SALMONN/download_models/whisper" \
---text_model_name_or_path "/mnt/user/zhangyuhao/LLM/ACLlama/ACLlama" \
+--text_model_name_or_path "/mnt/user/zhangyuhao/LLM/llama3-instruct/llama3_1-8B" \
 --data_path "../data/speech_libritrain.json" \
 --fp16 True \
---output_dir "../output/ACLlama_lora" \
+--output_dir "../ACLlama" \
 --num_train_epochs 20 \
---per_device_train_batch_size 8 \
+--per_device_train_batch_size 2 \
 --per_device_eval_batch_size 1 \
 --gradient_accumulation_steps 8 \
 --evaluation_strategy "no" \

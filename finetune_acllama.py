@@ -146,9 +146,8 @@ def preprocess(
     # im_end = tokenizer.im_end_id
 
     DEFAULT_AUDIO_PATCH_TOKEN = "<audio_patch>"
-    DEFAULT_AUDIO_START_TOKEN = "<audio_start>"
-    DEFAULT_AUDIO_END_TOKEN = "<audio_end>"
-    audio_placeholder = DEFAULT_AUDIO_START_TOKEN + DEFAULT_AUDIO_PATCH_TOKEN * CONFIG.audio_token_len + DEFAULT_AUDIO_END_TOKEN
+    audio_placeholder = DEFAULT_AUDIO_PATCH_TOKEN * CONFIG.audio_token_len
+    audio_placeholder = "\n"+audio_placeholder
     audio_placeholder_ids = tokenizer(audio_placeholder).input_ids
 
     begin_of_text_id = tokenizer.get_vocab()["<|begin_of_text|>"]
@@ -166,36 +165,44 @@ def preprocess(
         input_id,target = [], []
         system = [begin_of_text_id] + [start_header_id] + _system + [end_header_id] + nl_tokens + tokenizer(system_message).input_ids + [eot_id]
         input_id += system
-        input_id += audio_placeholder_ids
+        #input_id += audio_placeholder_ids
         target += [IGNORE_TOKEN_ID] * len(input_id)
+        prefix_index = 0
+        prefix_index += len(input_id)
         assert len(input_id) == len(target)
         for j, item in enumerate(source):
             role = item["from"]
             value = item["value"]
             if role == 'user':
-                _input_id = [start_header_id] + _user + [end_header_id] + nl_tokens + tokenizer(value).input_ids + [eot_id]
+                #_input_id = [start_header_id] + _user + [end_header_id] + nl_tokens + tokenizer(value).input_ids + [eot_id]
+                _input_id = [start_header_id] + _user + [end_header_id] + audio_placeholder_ids + tokenizer(value).input_ids + [eot_id]
                 _target = [IGNORE_TOKEN_ID] * len(_input_id)
                 audio_path = item["audio"] if "audio" in item.keys() else None
+                prefix_index+=(len(_input_id))
             elif role == 'assistant':
                 _input_id = [start_header_id] + _assistant + [end_header_id] + nl_tokens + tokenizer(value).input_ids + [eot_id]
                 _target = [IGNORE_TOKEN_ID] + [IGNORE_TOKEN_ID] * len(_assistant) + \
                           [IGNORE_TOKEN_ID] + [IGNORE_TOKEN_ID] * len(nl_tokens) + tokenizer(value).input_ids + [eot_id]
+                prefix_index+=(len([start_header_id] + _assistant + [end_header_id] + nl_tokens))
             else:
                 raise NotImplementedError
             input_id += _input_id
             target += _target
-        print(input_id)
+        #print(input_id)
         #print(target)
-        print(tokenizer.decode(input_id))
-        input()
+        #print(tokenizer.decode(target[prefix_index:]))
+        #print(tokenizer.decode(input_id))
         #print(len(input_id), len(target))
         #print(audio_path)
+        #print(prefix_index)
         assert len(input_id) == len(target)
         input_id += [tokenizer.pad_token_id] * (max_len - len(input_id))
         target += [IGNORE_TOKEN_ID] * (max_len - len(target))
         input_ids.append(input_id[:max_len])
         targets.append(target[:max_len])
         audio_paths.append(audio_path)
+        #print(tokenizer.decode(target[417:417+len(tokenizer(value).input_ids)+1]))
+        #input()
     input_ids = torch.tensor(input_ids, dtype=torch.int)
     targets = torch.tensor(targets, dtype=torch.int)
 
@@ -318,7 +325,7 @@ class BasicSetting:
     def __init__(self):
         self.device = "cuda"
         self.sampling_rate = 16000
-        self.audio_token_len = 64
+        self.audio_token_len = 375
         self.stop = "</s>"
 
 CONFIG = BasicSetting()
@@ -401,6 +408,7 @@ def train():
         torch_dtype=torch.float16
     )
 
+
     tokenizer = transformers.AutoTokenizer.from_pretrained(
         model_args.text_model_name_or_path,
         cache_dir=training_args.cache_dir,
@@ -420,8 +428,6 @@ def train():
     )
     audio_config = model.get_model().audio_tower[0].config
     audio_config.audio_patch_token = tokenizer.get_vocab()["<audio_patch>"]
-    audio_config.audio_start_token = tokenizer.get_vocab()["<audio_start>"]
-    audio_config.audio_end_token = tokenizer.get_vocab()["<audio_end>"]
 
     if training_args.use_lora:
         modules_to_save = None #["embed_tokens", "lm_head"]
@@ -462,8 +468,9 @@ def train():
 
         model = get_peft_model(model, lora_config)
 
+        # update adpater and mebed
         for name, parameter in model.named_parameters():
-            if "mm_projector" in name or "embed_tokens" in name or "lm_head" in name:
+            if "mm_projector" in name or "conv" in name: #or "embed_tokens" in name or "lm_head" in name:
                 parameter.requires_grad=True
        
         # Print peft trainable params
@@ -489,11 +496,11 @@ def train():
             base_model_path = os.path.join(checkpoint_folder, "base_model.bin")
             torch.save(model.state_dict(), base_model_path)
 
-            files = os.listdir(checkpoint_folder)
-            for file_name in files:
-                if ".safetensors" in file_name:
-                    file_path = os.path.join(checkpoint_folder, file_name)
-                    os.remove(file_path)
+            #files = os.listdir(checkpoint_folder)
+            #for file_name in files:
+            #    if ".safetensors" in file_name:
+            #        file_path = os.path.join(checkpoint_folder, file_name)
+            #        os.remove(file_path)
 
             return control
 
@@ -503,7 +510,7 @@ def train():
     training_args.restore_callback_states_from_checkpoint=True
     #print(training_args)
     # show updated parameters
-    #print(count_parameters(model))
+    print(count_parameters(model))
     # Start trainner
     trainer = Trainer(
         model=model, tokenizer=tokenizer, args=training_args, callbacks=call_back_list, **data_module

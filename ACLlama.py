@@ -39,7 +39,13 @@ class ACLlamaModel(LlamaModel):
             self.audio_tower = [load_whisper(config.audio_tower)]
 
         if hasattr(config, "adapter_size"):
-            self.mm_projector = nn.Linear(config.adapter_size, config.hidden_size)
+            #self.down_sampler = Conv1dSubsampler(config.adapter_size, config.hidden_size // 2, config.hidden_size // 2, [5])
+            #self.conv1 = nn.Conv1d(1280, config.hidden_size//2, kernel_size=3, stride=2, padding=1)
+            #self.conv2 = nn.Conv1d(4096, 4096, kernel_size=3, stride=2, padding=1)
+            self.mm_projector1 = nn.Linear(config.adapter_size*4 , config.hidden_size)
+            self.relu = nn.ReLU()
+            self.mm_projector2 = nn.Linear(config.hidden_size , config.hidden_size)
+            self.post_init()
 
     def forward(
         self,
@@ -72,9 +78,10 @@ class ACLlamaModel(LlamaModel):
                     else:
                         audio_features = []
                         for audio in audios_list:
-                            decoder_input_ids = torch.ones((1, self.config.audio_token_len)) * audio_tower.config.decoder_start_token_id
-                            decoder_input_ids = decoder_input_ids.to(audio.device).to(torch.long)
-                            audio_feature = audio_tower(audio, decoder_input_ids=decoder_input_ids).last_hidden_state
+                            #decoder_input_ids = torch.ones((1, self.config.audio_token_len)) * audio_tower.config.decoder_start_token_id
+                            #decoder_input_ids = decoder_input_ids.to(audio.device).to(torch.long)
+                            #audio_feature = audio_tower(audio, decoder_input_ids=decoder_input_ids).last_hidden_state
+                            audio_feature = audio_tower.encoder(audio).last_hidden_state
                             audio_features.append(audio_feature)
                     bs_audio_features.append(audio_features)
 
@@ -87,17 +94,22 @@ class ACLlamaModel(LlamaModel):
                     cur_input_embeds = cur_input_embeds + (0. * dummy_audio_features).sum()
                     new_input_embeds.append(cur_input_embeds)
                     continue
-                if (cur_input_ids == audio_config.audio_start_token).sum() != (cur_input_ids == audio_config.audio_end_token).sum():
-                    raise ValueError("The number of audio start tokens and audio end tokens should be the same.")
-                audio_start_tokens = torch.where(cur_input_ids == audio_config.audio_start_token)[0]
+                audio_start_tokens = torch.where(cur_input_ids == audio_config.audio_patch_token)[0][:1]
                 if len(audio_start_tokens) != len(cur_audio_features):
                     raise ValueError(f"The number of audio start tokens ({len(audio_start_tokens)}) and audio features ({len(cur_audio_features)}) should be the same.")
                 for audio_start_token_pos, cur_audio_feature in zip(audio_start_tokens, cur_audio_features):
-                    cur_audio_feature = self.mm_projector(cur_audio_feature)[0]
+                    #print(cur_audio_feature[0][0])
+                    cur_audio_feature = cur_audio_feature.view(cur_audio_feature.shape[0], cur_audio_feature.shape[1]//4, 4 * cur_audio_feature.shape[2])
+
+                    #cur_audio_feature = nn.functional.gelu(self.conv1(cur_audio_feature.transpose(1,2)/3)).transpose(1,2)
+                    #print(cur_audio_feature.transpose(1,2)[0][0])
+                    #cur_audio_feature = nn.functional.gelu(self.conv2(cur_audio_feature)).transpose(1,2)
+                    #print(cur_audio_feature[0][0])
+                    cur_audio_feature = self.mm_projector1(cur_audio_feature)
+                    cur_audio_feature = self.relu(cur_audio_feature)
+                    cur_audio_feature = self.mm_projector2(cur_audio_feature)[0]
                     cur_audio_feature = cur_audio_feature.to(device=cur_input_embeds.device)
                     num_patches = cur_audio_feature.shape[0]
-                    if cur_input_ids[audio_start_token_pos + num_patches + 1] != audio_config.audio_end_token:
-                        raise ValueError("The audio end token should follow the audio start token.")
                     if orig_embeds_params is not None:
                         cur_new_input_embeds = torch.cat(
                             (cur_input_embeds[:audio_start_token_pos].detach(),
@@ -107,9 +119,9 @@ class ACLlamaModel(LlamaModel):
                              cur_input_embeds[audio_start_token_pos + num_patches + 2:].detach()), dim=0)
                     else:
                         cur_new_input_embeds = torch.cat((
-                            cur_input_embeds[:audio_start_token_pos+1],
+                            cur_input_embeds[:audio_start_token_pos],
                             cur_audio_feature,
-                            cur_input_embeds[audio_start_token_pos + num_patches + 1:]), dim=0)
+                            cur_input_embeds[audio_start_token_pos + num_patches:]), dim=0)
                 new_input_embeds.append(cur_new_input_embeds)
 
             inputs_embeds = torch.stack(new_input_embeds, dim=0)

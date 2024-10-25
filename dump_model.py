@@ -129,7 +129,6 @@ def safe_save_model_for_hf_trainer(trainer: transformers.Trainer, output_dir: st
             )
         else:
             state_dict = trainer.model.state_dict()
-    print("run here")
     if trainer.args.should_save and trainer.args.local_rank == 0:
         trainer._save(output_dir, state_dict=state_dict)
 
@@ -145,10 +144,8 @@ def preprocess(
     # im_end = tokenizer.im_end_id
 
     DEFAULT_AUDIO_PATCH_TOKEN = "<audio_patch>"
-    DEFAULT_AUDIO_START_TOKEN = "<audio_start>"
-    DEFAULT_AUDIO_END_TOKEN = "<audio_end>"
-    tokenizer.add_tokens([DEFAULT_AUDIO_PATCH_TOKEN, DEFAULT_AUDIO_START_TOKEN, DEFAULT_AUDIO_END_TOKEN], special_tokens=True)
-    audio_placeholder = DEFAULT_AUDIO_START_TOKEN + DEFAULT_AUDIO_PATCH_TOKEN * CONFIG.audio_token_len + DEFAULT_AUDIO_END_TOKEN
+    tokenizer.add_tokens(DEFAULT_AUDIO_PATCH_TOKEN, special_tokens=True)
+    audio_placeholder = DEFAULT_AUDIO_PATCH_TOKEN * CONFIG.audio_token_len
     audio_placeholder_ids = tokenizer(audio_placeholder).input_ids
 
     begin_of_text_id = tokenizer.get_vocab()["<|begin_of_text|>"]
@@ -162,39 +159,41 @@ def preprocess(
 
     # Apply prompt templates
     input_ids, audio_paths, targets = [], [], []
-    for i, source in enumerate(sources):
-        input_id,target = [], []
-        system = [begin_of_text_id] + [start_header_id] + _system + [end_header_id] + nl_tokens + tokenizer(system_message).input_ids + [eot_id]
-        input_id += system
-        input_id += audio_placeholder_ids
-        target += [IGNORE_TOKEN_ID] * len(input_id)
-        assert len(input_id) == len(target)
-        for j, item in enumerate(source):
-            role = item["from"]
-            value = item["value"]
-            if role == 'user':
-                _input_id = [start_header_id] + _user + [end_header_id] + nl_tokens + tokenizer(value).input_ids + [eot_id]
-                _target = [IGNORE_TOKEN_ID] * len(_input_id)
-                audio_path = item["audio"] if "audio" in item.keys() else None
-            elif role == 'assistant':
-                _input_id = [start_header_id] + _assistant + [end_header_id] + nl_tokens + tokenizer(value).input_ids + [eot_id]
-                _target = [IGNORE_TOKEN_ID] + [IGNORE_TOKEN_ID] * len(_assistant) + \
-                          [IGNORE_TOKEN_ID] + [IGNORE_TOKEN_ID] * len(nl_tokens) + tokenizer(value).input_ids + [eot_id]
-            else:
-                raise NotImplementedError
-            input_id += _input_id
-            target += _target
-        #print(input_id)
-        #print(target)
-        #print(tokenizer.decode(input_id))
-        #print(len(input_id), len(target))
-        #print(audio_path)
-        assert len(input_id) == len(target)
-        input_id += [tokenizer.pad_token_id] * (max_len - len(input_id))
-        target += [IGNORE_TOKEN_ID] * (max_len - len(target))
-        input_ids.append(input_id[:max_len])
-        targets.append(target[:max_len])
-        audio_paths.append(audio_path)
+    #for i, source in enumerate(sources):
+    source = sources[0]
+
+    input_id,target = [], []
+    system = [begin_of_text_id] + [start_header_id] + _system + [end_header_id] + nl_tokens + tokenizer(system_message).input_ids + [eot_id]
+    input_id += system
+    input_id += audio_placeholder_ids
+    target += [IGNORE_TOKEN_ID] * len(input_id)
+    assert len(input_id) == len(target)
+    for j, item in enumerate(source):
+        role = item["from"]
+        value = item["value"]
+        if role == 'user':
+            _input_id = [start_header_id] + _user + [end_header_id] + nl_tokens + tokenizer(value).input_ids + [eot_id]
+            _target = [IGNORE_TOKEN_ID] * len(_input_id)
+            audio_path = item["audio"] if "audio" in item.keys() else None
+        elif role == 'assistant':
+            _input_id = [start_header_id] + _assistant + [end_header_id] + nl_tokens + tokenizer(value).input_ids + [eot_id]
+            _target = [IGNORE_TOKEN_ID] + [IGNORE_TOKEN_ID] * len(_assistant) + \
+                      [IGNORE_TOKEN_ID] + [IGNORE_TOKEN_ID] * len(nl_tokens) + tokenizer(value).input_ids + [eot_id]
+        else:
+            raise NotImplementedError
+        input_id += _input_id
+        target += _target
+    #print(input_id)
+    #print(target)
+    #print(tokenizer.decode(input_id))
+    #print(len(input_id), len(target))
+    #print(audio_path)
+    assert len(input_id) == len(target)
+    input_id += [tokenizer.pad_token_id] * (max_len - len(input_id))
+    target += [IGNORE_TOKEN_ID] * (max_len - len(target))
+    input_ids.append(input_id[:max_len])
+    targets.append(target[:max_len])
+    audio_paths.append(audio_path)
     input_ids = torch.tensor(input_ids, dtype=torch.int)
     targets = torch.tensor(targets, dtype=torch.int)
 
@@ -318,7 +317,7 @@ class BasicSetting:
         self.device = "cuda"
         self.llasm_context_len = 2048
         self.sampling_rate = 16000
-        self.audio_token_len = 64
+        self.audio_token_len = 375
         self.stop = "</s>"
 
 CONFIG = BasicSetting()
@@ -408,19 +407,23 @@ def train():
         low_cpu_mem_usage=True
     )
 
+    #torch.nn.init.xavier_uniform_(model.get_model().conv1.weight)
+    #torch.nn.init.xavier_uniform_(model.get_model().conv2.weight)
+    torch.nn.init.xavier_uniform_(model.get_model().mm_projector1.weight)
+    torch.nn.init.xavier_uniform_(model.get_model().mm_projector2.weight)
     #update embeddings
     embeddings=model.get_input_embeddings()
-    new_embeddings = torch.nn.Embedding(embeddings.num_embeddings+3, embeddings.embedding_dim, embeddings.padding_idx).to(CONFIG.device,dtype=torch.float16)
+    new_embeddings = torch.nn.Embedding(embeddings.num_embeddings+1, embeddings.embedding_dim, embeddings.padding_idx).to(CONFIG.device,dtype=torch.float16)
     new_embeddings.weight.data[:embeddings.num_embeddings] = embeddings.weight.data
     model.set_input_embeddings(new_embeddings)
 
-    new_head = torch.nn.Linear(config.hidden_size, config.vocab_size+3, bias=False)
+    new_head = torch.nn.Linear(config.hidden_size, config.vocab_size+1, bias=False)
     new_head.weight.data[ : config.vocab_size] = model.lm_head.weight.data
     model.lm_head = new_head
 
 
-    config.vocab_size+=3
-    model.config.vocab_size+=3
+    config.vocab_size+=1
+    model.config.vocab_size+=1
 
     tokenizer = transformers.AutoTokenizer.from_pretrained(
         model_args.text_model_name_or_path,
@@ -443,8 +446,6 @@ def train():
     #audio_config.audio_patch_token = tokenizer.convert_tokens_to_ids([DEFAULT_AUDIO_PATCH_TOKEN])[0]
     #audio_config.audio_start_token, audio_config.audio_end_token = tokenizer.convert_tokens_to_ids([DEFAULT_AUDIO_START_TOKEN, DEFAULT_AUDIO_END_TOKEN])
     audio_config.audio_patch_token = tokenizer.get_vocab()["<audio_patch>"]
-    audio_config.audio_start_token = tokenizer.get_vocab()["<audio_start>"]
-    audio_config.audio_end_token = tokenizer.get_vocab()["<audio_end>"]
 
     model.save_pretrained(training_args.output_dir)
     tokenizer.save_pretrained(training_args.output_dir)
