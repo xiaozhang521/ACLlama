@@ -139,7 +139,8 @@ def preprocess(
         sources,
         tokenizer: transformers.PreTrainedTokenizer,
         max_len: int,
-        system_message: str = "You are a pirate chatbot who always responds in pirate speak!"
+        system_message: str = "You are a helpful language and speech assistant. You are able to understand the speech content that the user provides, and assist the user with a variety of tasks using natural language."
+
 ) -> Dict:
 
     # im_start = tokenizer.im_start_id
@@ -176,6 +177,7 @@ def preprocess(
             if role == 'user':
                 #_input_id = [start_header_id] + _user + [end_header_id] + nl_tokens + tokenizer(value).input_ids + [eot_id]
                 _input_id = [start_header_id] + _user + [end_header_id] + audio_placeholder_ids + tokenizer(value).input_ids + [eot_id]
+                #_input_id = [start_header_id] + _user + [end_header_id] + tokenizer("Here is an audio clip:").input_ids + audio_placeholder_ids + tokenizer(". Generate the transcription in English:").input_ids + [eot_id]
                 _target = [IGNORE_TOKEN_ID] * len(_input_id)
                 audio_path = item["audio"] if "audio" in item.keys() else None
                 prefix_index+=(len(_input_id))
@@ -430,7 +432,8 @@ def train():
     audio_config.audio_patch_token = tokenizer.get_vocab()["<audio_patch>"]
 
     if training_args.use_lora:
-        modules_to_save = None #["embed_tokens", "lm_head"]
+        #modules_to_save = None #["embed_tokens", "lm_head"]
+        modules_to_save = ["mm_projector1","mm_projector2"]
 
         def find_all_linear_names(args, model):
             import bitsandbytes as bnb
@@ -470,7 +473,7 @@ def train():
 
         # update adpater and mebed
         for name, parameter in model.named_parameters():
-            if "mm_projector" in name or "conv" in name: #or "embed_tokens" in name or "lm_head" in name:
+            if "mm_projector" in name: #or "embed_tokens" in name or "lm_head" in name:
                 parameter.requires_grad=True
        
         # Print peft trainable params
@@ -507,17 +510,17 @@ def train():
     config.save_pretrained(training_args.output_dir)
     print(model) 
     call_back_list = [SavePeftModelCallback]
-    training_args.restore_callback_states_from_checkpoint=True
-    #print(training_args)
+    #training_args.restore_callback_states_from_checkpoint=True
     # show updated parameters
     print(count_parameters(model))
     # Start trainner
     trainer = Trainer(
-        model=model, tokenizer=tokenizer, args=training_args, callbacks=call_back_list, **data_module
-        #model=model, tokenizer=tokenizer, args=training_args, **data_module
+        #model=model, tokenizer=tokenizer, args=training_args, callbacks=call_back_list, **data_module
+        model=model, tokenizer=tokenizer, args=training_args, **data_module
     )
 
     with torch.autocast("cuda"):
+        #trainer.train(resume_from_checkpoint="/wangbenyou/zhangyuhao/llms/ACLlama2/output/ACLlama_lora_libri_check_save/checkpoint-900")
         trainer.train()
     trainer.save_state()
 

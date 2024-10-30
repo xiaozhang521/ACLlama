@@ -25,7 +25,6 @@ def load_whisper(audio_tower_name):
     model = WhisperModel.from_pretrained(
             audio_tower_name,torch_dtype=torch.float16, low_cpu_mem_usage=True).to('cuda')
     model.config.forced_decoder_ids = None
-    print(audio_tower_name)
     return model
 
 
@@ -223,6 +222,7 @@ class ACLlamaForCausalLM(LlamaForCausalLM):
             hidden_states=outputs.hidden_states,
             attentions=outputs.attentions,
         )
+
     def prepare_inputs_for_generation(
         self,
         input_ids,
@@ -266,7 +266,6 @@ class ACLlamaForCausalLM(LlamaForCausalLM):
             }
         )
         model_inputs.update({"audios": kwargs["audios"]} if "audios" in kwargs.keys() else {})
-        print("run here")
         return model_inputs
 
 

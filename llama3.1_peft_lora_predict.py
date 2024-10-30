@@ -1,6 +1,6 @@
 import os
 import json
-os.environ["CUDA_VISIBLE_DEVICES"] = "6"
+os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 from peft import PeftModel, PeftConfig, LoraModel, LoraConfig
 from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig, AutoConfig,WhisperProcessor
 import librosa
@@ -11,7 +11,6 @@ from ACLlama import ACLlamaForCausalLM
 import torch
 import random
 
-adapter_name = "self"
 
 class BasicSetting:
     def __init__(self):
@@ -25,12 +24,11 @@ CONFIG = BasicSetting()
 # peft_model_id = "./output/qwen1.5_72B_lora/checkpoint-80/"
 
 #base_model_path = "/mnt/user/zhangyuhao/LLM/llama3-instruct/llama3_1-8B"
-base_model_path = "/mnt/user/zhangyuhao/LLM/ACLlama2/ACLlama"
-peft_model_id = "/mnt/user/zhangyuhao/LLM/ACLlama2/output/ACLlama_lora/checkpoint-1600/"
+base_model_path = "/wangbenyou/zhangyuhao/llms/ACLlama2/ACLlama"
+peft_model_id = "/wangbenyou/zhangyuhao/llms/ACLlama2/output/ACLlama_lora_libri_check_save/checkpoint-900"
 #input_audio_file= "/mnt/user/bufan/speech_data/speech_wav/LibriSpeech/LibriSpeech/test-clean/6829/68769/6829-68769-0026.flac"
 #input_audio_file= "/mnt/user/bufan/speech_data/speech_wav/LibriSpeech/LibriSpeech/test-clean/6829/68769/6829-68769-0046.flac"
-input_audio_file= "/mnt/user/bufan/speech_data/speech_wav/LibriSpeech/LibriSpeech/test-clean/6829/68769/6829-68769-0037.flac"
-#input_audio_file= "/mnt/user/zhangyuhao/data/LibriSpeech/dev-other/4570/102353/4570-102353-0007.flac"
+input_audio_file= "/wangbenyou/zhangyuhao/data/LibriSpeech/dev-other/4570/102353/4570-102353-0007.flac"
 #input_audio_file= "/mnt/user/zhangyuhao/data/LibriSpeech/dev-other/4570/102353/4570-102353-0005.flac"
 
 quantization_config = None
@@ -43,7 +41,8 @@ def get_result(model_inputs, model, tokenizer, audio_feat):
         **model_inputs,
         audios=audio_feat,
         max_new_tokens=512,
-        eos_token_id=tokenizer.eos_token_id
+        eos_token_id=tokenizer.eos_token_id,
+        #do_sample=False,
     )
     #print(tokenizer.batch_decode(output_ids))
     input_ids=model_inputs["input_ids"]
@@ -86,7 +85,7 @@ def gen_model_inputs(tokenizer, system, prompt):
     assistant_input_id = [start_header_id] + _assistant + [end_header_id] + nl_tokens
     input_id += user_input_id
     input_id += assistant_input_id
-    #print(input_id)
+    #print("input_id", input_id)
     #print(target)
     #print(tokenizer.decode(input_id))
     #print(len(input_id), len(target))
@@ -102,26 +101,28 @@ def main(args):
                                                device_map="cuda",
                                                torch_dtype=torch.float16,
                                                quantization_config=quantization_config)
-    
+    print(model) 
     tokenizer = AutoTokenizer.from_pretrained(peft_model_id)
     audio_config = model.get_model().audio_tower[0].config
     audio_config.audio_patch_token = tokenizer.get_vocab()["<audio_patch>"]
 
     lora_config = PeftConfig.from_pretrained(peft_model_id)
-    combined_weights = torch.load(peft_model_id + "/base_model.bin", map_location=f"cuda")
-    #combined_weights = torch.load("/mnt/user/zhangyuhao/LLM/ACLlama2/output/ACLlama_lora/base_model.bin", map_location=f"cuda")
-    need_combined_weights = {}
-    for item in combined_weights.keys():
-        if "lora" not in item:
-            need_combined_weights[item.replace("base_model.model.", "")] = combined_weights[item]
-    model.load_state_dict(need_combined_weights, strict=True)
-    my_target_modules = []
-    for id, (name, param) in enumerate(model.named_modules()):
-        if 'model' in name and ('q_proj' in name or 'v_proj' in name):
-            my_target_modules.append(name)
+
+    #combined_weights = torch.load(peft_model_id + "/base_model.bin", map_location=f"cuda")
+    #need_combined_weights = {}
+    #for item in combined_weights.keys():
+    #    if "lora" not in item:
+    #        need_combined_weights[item.replace("base_model.model.", "")] = combined_weights[item]
+    #model.load_state_dict(need_combined_weights, strict=True)
+
+    #my_target_modules = []
+    #for id, (name, param) in enumerate(model.named_modules()):
+    #    if 'model' in name and ('q_proj' in name or 'v_proj' in name):
+    #        my_target_modules.append(name)
     #lora_config = LoraConfig(r=64, lora_alpha=16, target_modules=my_target_modules, lora_dropout=0.05, bias="none")
-    lora_config.target_modules=my_target_modules
+    #lora_config.target_modules=my_target_modules
     model = PeftModel.from_pretrained(model, peft_model_id, config=lora_config).to(dtype=torch.float16).to('cuda')
+    print(model) 
     model.eval()
     
     prompt = "What does the person say?"
@@ -131,7 +132,7 @@ def main(args):
     #model_inputs2 = tokenizer([text], return_tensors="pt").to(CONFIG.device)
     #print(tokenizer.decode(model_inputs["input_ids"][0]))
     
-    fo = open("data/speech_train.json","r")
+    fo = open("data/speech_libritrain.json","r")
     items = json.load(fo)
     for i in items:
         cur_input_audio_file = i["conversations"][0]["audio"]
@@ -149,9 +150,9 @@ def main(args):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--input_audio_file', type=str, default='/mnt/user/bufan/speech_data/speech_wav/LibriSpeech/LibriSpeech/test-clean/6829/68769/6829-68769-0026.flac')
-    parser.add_argument('--llm_model', type=str, default='/mnt/user/zhangyuhao/LLM/ACLlama/ACLlama')
+    parser.add_argument('--llm_model', type=str, default='/mnt/user/zhangyuhao/LLM/ACLlama2/ACLlama')
     parser.add_argument('--adapter_size', type=int, default=1280)
-    parser.add_argument('--audio_tower', type=str, default='/mnt/user/zhangyuhao/speechLLM/SALMONN/download_models/whisper')
+    parser.add_argument('--audio_tower', type=str, default='/wangbenyou/zhangyuhao/llms/whisper-v3')
     parser.add_argument('--llm_type', type=str, default='llama3')
     parser.add_argument('--temperature', type=float, default=0.2)
     parser.add_argument('--max_new_tokens', type=int, default=1024)
