@@ -15,19 +15,6 @@ ACLlama (ACoustic Llama) is a project that extends the Llama model for acoustic 
 ## Environment Dependencies
 
 Before using this project, ensure the following Python libraries are installed:
-#### requirement.txt: 
-```txt
-torch==2.2.0
-transformers==4.43.1
-deepspeed==0.9.4
-accelerate==0.34.2
-peft==0.5.0
-numpy==1.24.4
-jinja2==3.1.3
-pydantic==1.10.6
-datasets==2.18.0
-bitsandbytes==0.43.0
-```
 
 #### Install command
 ```bash
