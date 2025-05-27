@@ -22,10 +22,17 @@ from prettytable import PrettyTable
 from accelerate.utils import DistributedType
 from transformers.trainer_utils import PREFIX_CHECKPOINT_DIR
 from transformers import BitsAndBytesConfig
-from ACLlama import ACLlamaForCausalLM
+#from ACLlama_align import ACLlamaForCausalLM
+from ACLlama_el import ACLlamaForCausalLM
+import string
+from tqdm import tqdm
+import orjson
+from torch import multiprocessing
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 IGNORE_TOKEN_ID = LabelSmoother.ignore_index
 
+MAX_ASR_LENGTH = 200
 
 @dataclass
 class ModelArguments:
@@ -42,7 +49,7 @@ class DataArguments:
     eval_data_path: str = field(
         default=None, metadata={"help": "Path to the evaluation data."}
     )
-    lazy_preprocess: bool = False
+    lazy_preprocess: bool = True
 
 
 @dataclass
@@ -56,6 +63,7 @@ class TrainingArguments(transformers.TrainingArguments):
         },
     )
     use_lora: bool = False
+    dataloader_num_workers: int = 4
 
 
 @dataclass
@@ -63,9 +71,9 @@ class LoraArguments:
     lora_r: int = 64
     lora_alpha: int = 16
     lora_dropout: float = 0.05
-    # ['gate_proj', 'o_proj', 'k_proj', 'q_proj', 'up_proj', 'down_proj', 'v_proj']
     lora_target_modules: List[str] = field(
-        default_factory=lambda: ['o_proj', 'k_proj', 'q_proj', 'v_proj']
+        #default_factory=lambda: ['o_proj', 'k_proj', 'q_proj', 'v_proj']
+        default_factory=lambda: ['k_proj', 'q_proj', 'v_proj']
     )
     # lora_target_modules = None
     lora_weight_path: str = ""
@@ -160,9 +168,8 @@ def preprocess(
     _user = tokenizer('user').input_ids
     _assistant = tokenizer('assistant').input_ids
 
-    # Apply prompt templates
-    input_ids, audio_paths, targets = [], [], []
-    for i, source in enumerate(sources):
+
+    def convert_to_id(source):
         input_id,target = [], []
         system = [begin_of_text_id] + [start_header_id] + _system + [end_header_id] + nl_tokens + tokenizer(system_message).input_ids + [eot_id]
         input_id += system
@@ -177,7 +184,6 @@ def preprocess(
             if role == 'user':
                 #_input_id = [start_header_id] + _user + [end_header_id] + nl_tokens + tokenizer(value).input_ids + [eot_id]
                 _input_id = [start_header_id] + _user + [end_header_id] + audio_placeholder_ids + tokenizer(value).input_ids + [eot_id]
-                #_input_id = [start_header_id] + _user + [end_header_id] + tokenizer("Here is an audio clip:").input_ids + audio_placeholder_ids + tokenizer(". Generate the transcription in English:").input_ids + [eot_id]
                 _target = [IGNORE_TOKEN_ID] * len(_input_id)
                 audio_path = item["audio"] if "audio" in item.keys() else None
                 prefix_index+=(len(_input_id))
@@ -186,32 +192,86 @@ def preprocess(
                 _target = [IGNORE_TOKEN_ID] + [IGNORE_TOKEN_ID] * len(_assistant) + \
                           [IGNORE_TOKEN_ID] + [IGNORE_TOKEN_ID] * len(nl_tokens) + tokenizer(value).input_ids + [eot_id]
                 prefix_index+=(len([start_header_id] + _assistant + [end_header_id] + nl_tokens))
+                #  TODO change the process code of ASR data
+                asr_value = item["transcription"]  #value.split(":")[-1].replace(".","")
+                asr_id = tokenizer(asr_value).input_ids[1:]
+                #asr_targets.append(asr_id+[IGNORE_TOKEN_ID] * (MAX_ASR_LENGTH - len(asr_id)))
+                asr_target=asr_id+[IGNORE_TOKEN_ID] * (MAX_ASR_LENGTH - len(asr_id))
             else:
                 raise NotImplementedError
             input_id += _input_id
             target += _target
-        #print(input_id)
-        #print(target)
-        #print(tokenizer.decode(target[prefix_index:]))
-        #print(tokenizer.decode(input_id))
-        #print(len(input_id), len(target))
-        #print(audio_path)
-        #print(prefix_index)
+        assert len(input_id) == len(target)
+        input_id += [tokenizer.pad_token_id] * (max_len - len(input_id))
+        target += [IGNORE_TOKEN_ID] * (max_len - len(target))
+        #input_ids.append(input_id[:max_len])
+        #targets.append(target[:max_len])
+        #audio_paths.append(audio_path)
+        #return input_ids,targets,audio_paths,asr_targets
+        return input_id,target,audio_path,asr_target
+
+    # Apply prompt templates
+    input_ids, audio_paths, targets = [], [], []
+    asr_targets = []
+    #with ThreadPoolExecutor(max_workers=2) as executor:
+    #    future_to_item = {executor.submit(convert_to_id, source): source for source in tqdm(sources)}
+    #    for future in tqdm(as_completed(future_to_item)):
+    #        #results.append(future.result())
+    #        input_id,target,audio_path,asr_target=future.result()
+    #        input_ids.append(input_id[:max_len])
+    #        targets.append(target[:max_len])
+    #        audio_paths.append(audio_path)
+    #        asr_targets.append(asr_target)
+    #print("Finish process data, total:",len(input_ids))
+    #for source in tqdm(sources):
+    for source in sources:
+        input_id,target = [], []
+        system = [begin_of_text_id] + [start_header_id] + _system + [end_header_id] + nl_tokens + tokenizer(system_message).input_ids + [eot_id]
+        input_id += system
+        #input_id += audio_placeholder_ids
+        target += [IGNORE_TOKEN_ID] * len(input_id)
+        prefix_index = 0
+        prefix_index += len(input_id)
+        assert len(input_id) == len(target)
+        for j, item in enumerate(source):
+            role = item["from"]
+            value = item["value"]
+            if role == 'user':
+                #_input_id = [start_header_id] + _user + [end_header_id] + nl_tokens + tokenizer(value).input_ids + [eot_id]
+                _input_id = [start_header_id] + _user + [end_header_id] + audio_placeholder_ids + tokenizer(value).input_ids + [eot_id]
+                _target = [IGNORE_TOKEN_ID] * len(_input_id)
+                audio_path = item["audio"] if "audio" in item.keys() else None
+                prefix_index+=(len(_input_id))
+            elif role == 'assistant':
+                _input_id = [start_header_id] + _assistant + [end_header_id] + nl_tokens + tokenizer(value).input_ids + [eot_id]
+                _target = [IGNORE_TOKEN_ID] + [IGNORE_TOKEN_ID] * len(_assistant) + \
+                          [IGNORE_TOKEN_ID] + [IGNORE_TOKEN_ID] * len(nl_tokens) + tokenizer(value).input_ids + [eot_id]
+                prefix_index+=(len([start_header_id] + _assistant + [end_header_id] + nl_tokens))
+                #  TODO change the process code of ASR data
+                asr_value = item["transcription"] if "transcription" in item.keys() else None
+                if asr_value:
+                    asr_id = tokenizer(asr_value).input_ids[1:]
+                    asr_targets.append(asr_id+[IGNORE_TOKEN_ID] * (MAX_ASR_LENGTH - len(asr_id)))
+            else:
+                raise NotImplementedError
+            input_id += _input_id
+            target += _target
         assert len(input_id) == len(target)
         input_id += [tokenizer.pad_token_id] * (max_len - len(input_id))
         target += [IGNORE_TOKEN_ID] * (max_len - len(target))
         input_ids.append(input_id[:max_len])
         targets.append(target[:max_len])
         audio_paths.append(audio_path)
-        #print(tokenizer.decode(target[417:417+len(tokenizer(value).input_ids)+1]))
-        #input()
     input_ids = torch.tensor(input_ids, dtype=torch.int)
     targets = torch.tensor(targets, dtype=torch.int)
-
+    if len(asr_targets) > 0:
+        asr_targets = torch.tensor(asr_targets, dtype=torch.int)
+    #print("Finish process data, total:",len(input_ids))
     return dict(
         input_ids=input_ids,
         labels=targets,
         audio_paths=audio_paths,
+        asr_targets=asr_targets,
         attention_mask=input_ids.ne(tokenizer.pad_token_id),
     )
 
@@ -226,11 +286,13 @@ class SupervisedDataset(Dataset):
         sources = [example["conversations"] for example in raw_data]
         data_dict = preprocess(sources, tokenizer, max_len)
         self.audio_processor = WhisperProcessor.from_pretrained(audio_processor_path, torch_dtype=torch.float16)
+        self.mask_id = tokenizer.pad_token_id
 
         self.input_ids = data_dict["input_ids"]
         self.labels = data_dict["labels"]
         self.audio_paths = data_dict["audio_paths"]
         self.attention_mask = data_dict["attention_mask"]
+        self.asr_targets = data_dict["asr_targets"]
 
 
     def __len__(self):
@@ -239,21 +301,21 @@ class SupervisedDataset(Dataset):
     def __getitem__(self, i) -> Dict[str, torch.Tensor]:
         audio, _ = librosa.load(self.audio_paths[i], sr=CONFIG.sampling_rate)
         audio_feat = self.audio_processor(audio, sampling_rate=CONFIG.sampling_rate, return_tensors="pt").input_features
-        #audio_feat = audio_feat.unsqueeze(0).unsqueeze(0).to(CONFIG.device, dtype=torch.float16)
-        audio_feat = audio_feat.unsqueeze(0).to(CONFIG.device, dtype=torch.float16)
-
+        audio_feat = audio_feat.squeeze(0).to(CONFIG.device, dtype=torch.float16)
+        tmp_input_ids = torch.tensor(self.input_ids[i],dtype=torch.int)
         return dict(
             input_ids=self.input_ids[i],
             labels=self.labels[i],
             attention_mask=self.attention_mask[i],
-            audios=audio_feat
+            audios=audio_feat,
+            asr_targets=self.asr_targets[i]
         )
 
 
 class LazySupervisedDataset(Dataset):
     """Dataset for supervised fine-tuning."""
 
-    def __init__(self, raw_data, tokenizer: transformers.PreTrainedTokenizer, max_len: int):
+    def __init__(self, raw_data, tokenizer: transformers.PreTrainedTokenizer, max_len: int, audio_processor_path=None):
         super(LazySupervisedDataset, self).__init__()
         self.tokenizer = tokenizer
         self.max_len = max_len
@@ -262,21 +324,34 @@ class LazySupervisedDataset(Dataset):
         self.tokenizer = tokenizer
         self.raw_data = raw_data
         self.cached_data_dict = {}
+        self.audio_processor = WhisperProcessor.from_pretrained(audio_processor_path, torch_dtype=torch.float16)
 
     def __len__(self):
         return len(self.raw_data)
 
     def __getitem__(self, i) -> Dict[str, torch.Tensor]:
-        if i in self.cached_data_dict:
-            return self.cached_data_dict[i]
 
         ret = preprocess([self.raw_data[i]["conversations"]], self.tokenizer, self.max_len)
-        ret = dict(
-            input_ids=ret["input_ids"][0],
-            labels=ret["labels"][0],
-            attention_mask=ret["attention_mask"][0],
-        )
-        self.cached_data_dict[i] = ret
+        audio_path = ret["audio_paths"][0]
+        audio, _ = librosa.load(audio_path, sr=CONFIG.sampling_rate)
+        audio_feat = self.audio_processor(audio, sampling_rate=CONFIG.sampling_rate, return_tensors="pt").input_features
+        audio_feat = audio_feat.squeeze(0).to(dtype=torch.float16)
+
+        if len(ret["asr_targets"])>0:
+            ret = dict(
+                input_ids=ret["input_ids"][0],
+                labels=ret["labels"][0],
+                attention_mask=ret["attention_mask"][0],
+                audios=audio_feat,
+                asr_targets=ret["asr_targets"][0]
+            )
+        else:
+            ret = dict(
+                input_ids=ret["input_ids"][0],
+                labels=ret["labels"][0],
+                attention_mask=ret["attention_mask"][0],
+                audios=audio_feat,
+            )
 
         return ret
 
@@ -290,7 +365,9 @@ def make_supervised_data_module(
     )
     rank0_print("Loading data...")
 
-    train_json = json.load(open(data_args.data_path, "r"))
+    with open(data_args.data_path,"rb") as f:
+        #train_json = json.load(open(data_args.data_path, "r"))
+        train_json=orjson.loads(f.read())
     train_dataset = dataset_cls(train_json, tokenizer=tokenizer, max_len=max_len, audio_processor_path=audio_processor_path)
 
     if data_args.eval_data_path:
@@ -327,7 +404,7 @@ class BasicSetting:
     def __init__(self):
         self.device = "cuda"
         self.sampling_rate = 16000
-        self.audio_token_len = 375
+        self.audio_token_len = 1
         self.stop = "</s>"
 
 CONFIG = BasicSetting()
@@ -430,10 +507,13 @@ def train():
     )
     audio_config = model.get_model().audio_tower[0].config
     audio_config.audio_patch_token = tokenizer.get_vocab()["<audio_patch>"]
+    audio_config.llm_pad_token_id = tokenizer.pad_token_id
+    audio_config.audio_patch_size = CONFIG.audio_token_len
 
     if training_args.use_lora:
         #modules_to_save = None #["embed_tokens", "lm_head"]
-        modules_to_save = ["mm_projector1","mm_projector2"]
+        #modules_to_save = ["mm_projector1","mm_projector2","asr_encoder_layer"]
+        modules_to_save = ["mm_projector1","asr_transformer_encoder","out_norm","lbm"]
 
         def find_all_linear_names(args, model):
             import bitsandbytes as bnb
@@ -471,10 +551,11 @@ def train():
 
         model = get_peft_model(model, lora_config)
 
+        #model.get_model().get_input_embeddings().weight[128256].requires_grad = True
         # update adpater and mebed
-        for name, parameter in model.named_parameters():
-            if "mm_projector" in name: #or "embed_tokens" in name or "lm_head" in name:
-                parameter.requires_grad=True
+        #for name, parameter in model.named_parameters():
+            #if "mm_projector" in name: #or "audio_feature_head" in name: #or "embed_tokens" in name or "lm_head" in name:
+            #    parameter.requires_grad=True
        
         # Print peft trainable params
         model.print_trainable_parameters()
@@ -520,12 +601,14 @@ def train():
     )
 
     with torch.autocast("cuda"):
-        #trainer.train(resume_from_checkpoint="/wangbenyou/zhangyuhao/llms/ACLlama2/output/ACLlama_lora_libri_check_save/checkpoint-900")
-        trainer.train()
+        #trainer.train(resume_from_checkpoint="/wangbenyou/zhangyuhao/llms/ACLlama_e2/output/ACLlama_lora_libri_ctc_new_data/checkpoint-1700/")
+        trainer.train(resume_from_checkpoint="/mntcephfs/data/med/speech_llm/output/speech_llm_align_clean/checkpoint-11500")
+        #trainer.train()
     trainer.save_state()
 
     safe_save_model_for_hf_trainer(trainer=trainer, output_dir=training_args.output_dir, bias=lora_args.lora_bias)
 
 
 if __name__ == "__main__":
+    multiprocessing.set_start_method('spawn')
     train()
