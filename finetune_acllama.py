@@ -30,6 +30,12 @@ import orjson
 from torch import multiprocessing
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
+#########
+import random
+from functools import partial
+from typing import Dict, List, Union
+#########
+
 IGNORE_TOKEN_ID = LabelSmoother.ignore_index
 
 MAX_ASR_LENGTH = 200
@@ -308,14 +314,73 @@ class SupervisedDataset(Dataset):
             labels=self.labels[i],
             attention_mask=self.attention_mask[i],
             audios=audio_feat,
-            asr_targets=self.asr_targets[i]
-        )
+            asr_targets=self.asr_targets[i],
+        ), i
 
+
+#######
+class AudioDataCollator:
+    def __init__(self, tokenizer, dataset=None):
+        self.tokenizer = tokenizer
+        self.dataset = dataset  # 传入 Dataset 本体以便采样负样本
+
+    def __call__(self, batch: Dict[str, Union[List[int], torch.Tensor]]):
+        
+        batch_samples, index = zip(*batch)
+        batch_size = len(batch)
+        used_indices = set(index)
+
+        # print(f"self.dataset is : {self.dataset}")
+        # print(f"batch_size i s: {batch_size}")
+        # print(f"batch i s: {type(batch[0])}")
+        # for i in range(len(batch)):
+        #     print(f"batch is : {batch[i].keys()}")
+        #     print(f"index i s: {index}")
+        # exit(0)
+
+        # 采样负样本索引，确保与当前 batch 不重复
+        dataset_size = len(self.dataset)
+        
+        # print(f"used_indices is : {used_indices}")
+        # print(f"used_indices is : {type(used_indices[0])}")        
+        # exit(0)
+        
+        # 剔除已用 index，随机采样负样本 index
+        available_indices = list(set(range(dataset_size)) - used_indices)
+        neg_indices = random.sample(available_indices, k=batch_size)
+        neg_batch = [self.dataset[i][0] for i in neg_indices]
+
+        def stack_or_list(key):
+            if isinstance(batch_samples[0][key], torch.Tensor):
+                return torch.stack([item[key] for item in batch_samples])
+            else:
+                return [item[key] for item in batch_samples]
+
+        # torch.set_printoptions(threshold=float('inf'))
+        # print(stack_or_list("input_ids"))
+        # print(len(stack_neg("audios")))
+        # print(stack_neg("input_ids"))
+        # exit(0)
+
+        return {
+            "input_ids": stack_or_list("input_ids"),
+            "labels": stack_or_list("labels"),
+            "attention_mask": stack_or_list("attention_mask"),
+            "audios": stack_or_list("audios"),
+            "asr_targets": stack_or_list("asr_targets") if batch_samples[0]["asr_targets"] is not None else None,
+            "input_ids_neg": stack_or_list("input_ids"),
+            "labels_neg": stack_or_list("labels"),
+            "attention_mask_neg": stack_or_list("attention_mask"),
+            "audios_neg": stack_or_list("audios"),
+            "asr_targets_neg": stack_or_list("asr_targets") if batch_samples[0]["asr_targets"] is not None else None,
+        }
+
+#######
 
 class LazySupervisedDataset(Dataset):
     """Dataset for supervised fine-tuning."""
 
-    def __init__(self, raw_data, tokenizer: transformers.PreTrainedTokenizer, max_len: int, audio_processor_path=None):
+    def __init__(self, raw_data, tokenizer: transformers.PreTrainedTokenizer, max_len: int, training_args=None, audio_processor_path=None):
         super(LazySupervisedDataset, self).__init__()
         self.tokenizer = tokenizer
         self.max_len = max_len
@@ -325,6 +390,8 @@ class LazySupervisedDataset(Dataset):
         self.raw_data = raw_data
         self.cached_data_dict = {}
         self.audio_processor = WhisperProcessor.from_pretrained(audio_processor_path, torch_dtype=torch.float16)
+        
+        self.training_args = training_args
 
     def __len__(self):
         return len(self.raw_data)
@@ -336,6 +403,34 @@ class LazySupervisedDataset(Dataset):
         audio, _ = librosa.load(audio_path, sr=CONFIG.sampling_rate)
         audio_feat = self.audio_processor(audio, sampling_rate=CONFIG.sampling_rate, return_tensors="pt").input_features
         audio_feat = audio_feat.squeeze(0).to(dtype=torch.float16)
+        
+        # # 从 dataset 中随机抽一些其他样本
+        # available_indices = list(set(range(len(self.raw_data))) - {i})
+        # sample_indices = random.sample(available_indices, k=self.training_args.per_device_train_batch_size * 2)
+        # other_samples = [self.raw_data[j] for j in sample_indices]
+        
+        # return_dict = {}
+        # input_ids_neg = []
+        # labels_neg = []
+        # attention_mask_neg = []
+        # asr_targets_neg = []
+        # audios_neg = []
+        # for item in other_samples:
+        #     ret = preprocess([item["conversations"]], self.tokenizer, self.max_len)
+        #     audio_path = ret["audio_paths"][0]
+        #     audio, _ = librosa.load(audio_path, sr=CONFIG.sampling_rate)
+        #     audio_feat = self.audio_processor(audio, sampling_rate=CONFIG.sampling_rate, return_tensors="pt").input_features
+        #     audio_feat = audio_feat.squeeze(0).to(dtype=torch.float16)
+        #     audios_neg.append(audio_feat)
+        
+        #     input_ids_neg.append(ret["input_ids"][0])
+        #     labels_neg.append(ret["labels"][0])
+        #     attention_mask_neg.append(ret["attention_mask"][0])
+        #     asr_targets_neg.append(ret["asr_targets"][0])
+            
+        # input_ids_neg = torch.stack(input_ids_neg, dim=0)
+        # labels_neg = torch.stack(labels_neg, dim=0)
+        # attention_mask_neg = torch.stack(attention_mask_neg, dim=0)
 
         if len(ret["asr_targets"])>0:
             ret = dict(
@@ -343,7 +438,7 @@ class LazySupervisedDataset(Dataset):
                 labels=ret["labels"][0],
                 attention_mask=ret["attention_mask"][0],
                 audios=audio_feat,
-                asr_targets=ret["asr_targets"][0]
+                asr_targets=ret["asr_targets"][0],
             )
         else:
             ret = dict(
@@ -352,14 +447,40 @@ class LazySupervisedDataset(Dataset):
                 attention_mask=ret["attention_mask"][0],
                 audios=audio_feat,
             )
+            
+        # if len(ret["asr_targets"])>0:
+        #     ret = dict(
+        #         input_ids=ret["input_ids"][0],
+        #         labels=ret["labels"][0],
+        #         attention_mask=ret["attention_mask"][0],
+        #         audios=audio_feat,
+        #         asr_targets=ret["asr_targets"][0],
+        #         input_ids_neg=input_ids_neg,
+        #         labels_neg=labels_neg,
+        #         attention_mask_neg=attention_mask_neg,
+        #         audios_neg=audios_neg,
+        #         asr_targets_neg=asr_targets_neg,
+        #     )
+        # else:
+        #     ret = dict(
+        #         input_ids=ret["input_ids"][0],
+        #         labels=ret["labels"][0],
+        #         attention_mask=ret["attention_mask"][0],
+        #         audios=audio_feat,
+        #         input_ids_neg=input_ids_neg,
+        #         labels_neg=labels_neg,
+        #         attention_mask_neg=attention_mask_neg,
+        #         audios_neg=audios_neg,
+        #     )
 
-        return ret
+        return ret, i
 
 
 def make_supervised_data_module(
-        tokenizer: transformers.PreTrainedTokenizer, data_args, max_len, audio_processor_path
+        tokenizer: transformers.PreTrainedTokenizer, data_args, training_args, max_len, audio_processor_path
 ) -> Dict:
     """Make dataset and collator for supervised fine-tuning."""
+
     dataset_cls = (
         LazySupervisedDataset if data_args.lazy_preprocess else SupervisedDataset
     )
@@ -368,11 +489,12 @@ def make_supervised_data_module(
     with open(data_args.data_path,"rb") as f:
         #train_json = json.load(open(data_args.data_path, "r"))
         train_json=orjson.loads(f.read())
-    train_dataset = dataset_cls(train_json, tokenizer=tokenizer, max_len=max_len, audio_processor_path=audio_processor_path)
+
+    train_dataset = dataset_cls(train_json, training_args=training_args, tokenizer=tokenizer, max_len=max_len, audio_processor_path=audio_processor_path)
 
     if data_args.eval_data_path:
         eval_json = json.load(open(data_args.eval_data_path, "r"))
-        eval_dataset = dataset_cls(eval_json, tokenizer=tokenizer, max_len=max_len)
+        eval_dataset = dataset_cls(eval_json, training_args=training_args, tokenizer=tokenizer, max_len=max_len)
     else:
         eval_dataset = None
 
@@ -503,7 +625,7 @@ def train():
 
     # Load data
     data_module = make_supervised_data_module(
-        tokenizer=tokenizer, data_args=data_args, max_len=training_args.model_max_length, audio_processor_path=model_args.audio_model_name_or_path
+        tokenizer=tokenizer, data_args=data_args, training_args=training_args, max_len=training_args.model_max_length, audio_processor_path=model_args.audio_model_name_or_path
     )
     audio_config = model.get_model().audio_tower[0].config
     audio_config.audio_patch_token = tokenizer.get_vocab()["<audio_patch>"]
@@ -560,7 +682,6 @@ def train():
         # Print peft trainable params
         model.print_trainable_parameters()
 
-
     if training_args.gradient_checkpointing:
         model.enable_input_require_grads()
 
@@ -594,16 +715,24 @@ def train():
     #training_args.restore_callback_states_from_checkpoint=True
     # show updated parameters
     print(count_parameters(model))
+    
+    #######
+    audio_data_collator = AudioDataCollator(tokenizer, dataset=data_module["train_dataset"])
+    #######
+    
     # Start trainner
     trainer = Trainer(
         #model=model, tokenizer=tokenizer, args=training_args, callbacks=call_back_list, **data_module
-        model=model, tokenizer=tokenizer, args=training_args, **data_module
+        # model=model, tokenizer=tokenizer, args=training_args, **data_module
+        #####
+        model=model, tokenizer=tokenizer, args=training_args, data_collator=audio_data_collator, **data_module
+        #####
     )
 
     with torch.autocast("cuda"):
         #trainer.train(resume_from_checkpoint="/wangbenyou/zhangyuhao/llms/ACLlama_e2/output/ACLlama_lora_libri_ctc_new_data/checkpoint-1700/")
-        trainer.train(resume_from_checkpoint="/mntcephfs/data/med/speech_llm/output/speech_llm_align_clean/checkpoint-11500")
-        #trainer.train()
+        # trainer.train(resume_from_checkpoint="/mntcephfs/data/med/speech_llm/output/speech_llm_align_clean/checkpoint-11500")
+        trainer.train()
     trainer.save_state()
 
     safe_save_model_for_hf_trainer(trainer=trainer, output_dir=training_args.output_dir, bias=lora_args.lora_bias)

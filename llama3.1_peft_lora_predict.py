@@ -16,8 +16,8 @@ os.environ["TOKENIZERS_PARALLELISM"] = "true"
 
 class BasicSetting:
     def __init__(self):
-        self.devices = ["cuda:0", "cuda:1", "cuda:2", "cuda:3"]
-        # self.devices = ["cuda:0", "cuda:1", "cuda:2", "cuda:3", "cuda:4", "cuda:5", "cuda:6",  "cuda:7"]
+        # self.devices = ["cuda:0", "cuda:1", "cuda:2", "cuda:3"]
+        self.devices = ["cuda:0", "cuda:1", "cuda:2", "cuda:3", "cuda:4", "cuda:5", "cuda:6",  "cuda:7"]
         self.sampling_rate = 16000
         self.audio_token_len = 1  # 1500 = 300 token x 5 compress
         self.stop = "</s>"
@@ -35,6 +35,8 @@ def get_result(model_inputs, model, tokenizer, audio_feat):
         eos_token_id=tokenizer.eos_token_id,
         # do_sample=False,
     )
+    # print(f"output_ids is : {output_ids}")
+    # exit(0)
     # print(tokenizer.batch_decode(output_ids))
     input_ids = model_inputs["input_ids"]
     input_token_len = input_ids.shape[1]
@@ -76,6 +78,17 @@ def process_items(thread_id, subset, args, CONFIG, return_dict):
     device = CONFIG.devices[thread_id % len(CONFIG.devices)]  # 根据线程ID选择设备
     print(f"Thread-{thread_id} running on {device}")
 
+    import glob
+    from safetensors.torch import load_file
+    shard_files = sorted(glob.glob(os.path.join(args.base_model_path, "adapter_model-*.safetensors")))
+    if not shard_files:
+        shard_files = sorted(glob.glob(os.path.join(args.base_model_path, "adapter_model.safetensors")))
+    need_combined_weights = {}
+    for shard in shard_files:
+        shard_state = load_file(shard)
+        need_combined_weights.update(shard_state)
+    print(f"need_combined_weights is : {need_combined_weights.keys()}")
+
     quantization_config = None
     model = ACLlamaForCausalLM.from_pretrained(
         args.base_model_path,
@@ -86,7 +99,7 @@ def process_items(thread_id, subset, args, CONFIG, return_dict):
     for module in model.model.audio_tower:
         module.to(device)
     torch.cuda.empty_cache()
-    model.model.mask_tensor = model.model.mask_tensor.to(device)
+    # model.model.mask_tensor = model.model.mask_tensor.to(device)
     tokenizer = AutoTokenizer.from_pretrained(args.peft_model_id)
 
     audio_config = model.get_model().audio_tower[0].config
@@ -153,6 +166,7 @@ def process_items(thread_id, subset, args, CONFIG, return_dict):
                 + " ||| "
                 + i["conversations"][1]["value"].replace("The person says: ", "").strip()
         )
+        
         thread_results[category].append(result_)
 
     return_dict[thread_id] = thread_results

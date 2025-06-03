@@ -20,7 +20,8 @@ from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training
 from prettytable import PrettyTable
 from accelerate.utils import DistributedType
 from transformers import BitsAndBytesConfig
-from ACLlama import ACLlamaForCausalLM
+# from ACLlama import ACLlamaForCausalLM
+from ACLlama_el import ACLlamaForCausalLM
 
 IGNORE_TOKEN_ID = LabelSmoother.ignore_index
 
@@ -410,16 +411,28 @@ def train():
     #torch.nn.init.xavier_uniform_(model.get_model().conv1.weight)
     #torch.nn.init.xavier_uniform_(model.get_model().conv2.weight)
     torch.nn.init.xavier_uniform_(model.get_model().mm_projector1.weight)
-    torch.nn.init.xavier_uniform_(model.get_model().mm_projector2.weight)
+    # torch.nn.init.xavier_uniform_(model.get_model().mm_projector2.weight)
+    
+    def init_weights(m):
+        if isinstance(m, torch.nn.Linear):
+            torch.nn.init.xavier_uniform_(m.weight)
+            if m.bias is not None:
+                torch.nn.init.zeros_(m.bias)
+
+    model.get_model().asr_transformer_encoder.apply(init_weights)
+    
     #update embeddings
     embeddings=model.get_input_embeddings()
     new_embeddings = torch.nn.Embedding(embeddings.num_embeddings+1, embeddings.embedding_dim, embeddings.padding_idx).to(CONFIG.device,dtype=torch.float16)
     new_embeddings.weight.data[:embeddings.num_embeddings] = embeddings.weight.data
     model.set_input_embeddings(new_embeddings)
 
+    import copy
     new_head = torch.nn.Linear(config.hidden_size, config.vocab_size+1, bias=False)
     new_head.weight.data[ : config.vocab_size] = model.lm_head.weight.data
     model.lm_head = new_head
+    model.audio_feature_head = copy.deepcopy(new_head)
+    model.model.audio_feature_head = copy.deepcopy(new_head)
 
 
     config.vocab_size+=1
@@ -448,6 +461,7 @@ def train():
     audio_config.audio_patch_token = tokenizer.get_vocab()["<audio_patch>"]
 
     model.save_pretrained(training_args.output_dir)
+    model.config.save_pretrained(training_args.output_dir)
     tokenizer.save_pretrained(training_args.output_dir)
     #if training_args.use_lora:
     #    if is_chat_model:
