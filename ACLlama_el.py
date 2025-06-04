@@ -456,45 +456,40 @@ class ACLlamaForCausalLM(LlamaForCausalLM):
                 
                 return loss, similarity
             
-            # encoder_embedding1: [B, 512, 3072]
-            # encoder_embedding2: [B, 187, 3072]
-            # lengths: [B]
+            # # encoder_embedding1: [B, 512, 3072]
+            # # encoder_embedding2: [B, 187, 3072]
+            # # lengths: [B]
             
-            # 创建 mask1: [B, 512]
-            mask1 = torch.arange(inputs_embeds.size(1), device=inputs_embeds.device)[None, :] < audio_feature_lengths[:, None]
-            mask1 = mask1.unsqueeze(-1)  # [B, 512, 1]
+            # # 创建 mask1: [B, 512]
+            # mask1 = torch.arange(inputs_embeds.size(1), device=inputs_embeds.device)[None, :] < audio_feature_lengths[:, None]
+            # mask1 = mask1.unsqueeze(-1)  # [B, 512, 1]
 
-            # masked mean
-            masked_sum1 = (inputs_embeds * mask1).sum(dim=1)  # [B, 3072]
-            masked_mean1 = masked_sum1 / audio_feature_lengths.unsqueeze(1)     # [B, 3072]
+            # # masked mean
+            # masked_sum1 = (inputs_embeds * mask1).sum(dim=1)  # [B, 3072]
+            # masked_mean1 = masked_sum1 / audio_feature_lengths.unsqueeze(1)     # [B, 3072]
 
-            # 直接对 encoder_embedding2 做 mean
-            mean2 = audio_features_4_loss.mean(dim=1)  # 假设它无 padding
-
-            # print(f"loss 111 is : {loss}")
+            # # 直接对 encoder_embedding2 做 mean
+            # mean2 = audio_features_4_loss.mean(dim=1)  # 假设它无 padding
 
             # ######
-            # # 全局余弦相似度
-            # similarity = self.similarity_function(masked_mean1, mean2).mean(-1)  # [B]
-            # e1 = inputs_embeds.unsqueeze(2)  # [B, 512, 1, 3072]
-            # e2 = audio_features_4_loss.unsqueeze(1)  # [B, 1, 187, 3072]
-            # pairwise_sim = self.similarity_function(e1, e2)  # [B, 512, 187]
-            # mask1 = (torch.arange(512, device=inputs_embeds.device)[None, :] < audio_feature_lengths[:, None]).unsqueeze(-1)
-            # anchor_dot_contrast = pairwise_sim * mask1  # [B, 512, 187]
-            # loss = -nn.LogSoftmax(1)(torch.div(anchor_dot_contrast, 1.0)).diagonal().sum()
-            # ######
-
-            ######
-            # === Step 2: 构造 global 对比相似度矩阵 ===
-            # similarity_matrix: [B, B]
-            similarity_matrix = self.similarity_function(
-                masked_mean1.unsqueeze(1),  # [B, 1, D]
-                mean2.unsqueeze(0)          # [1, B, D]
-            )
-            # === Step 3: InfoNCE loss ===
-            logits = similarity_matrix / 1.0  # [B, B]
-            log_probs = nn.LogSoftmax(dim=1)(logits)
-            loss = -log_probs.diagonal().mean()
+            # # === Step 2: 构造 global 对比相似度矩阵 ===
+            # # similarity_matrix: [B, B]
+            # similarity_matrix = self.similarity_function(
+            #     masked_mean1.unsqueeze(1),  # [B, 1, D]
+            #     mean2.unsqueeze(0)          # [1, B, D]
+            # )
+            # # === Step 3: InfoNCE loss ===
+            # logits = similarity_matrix / 1.0  # [B, B]
+            # log_probs = nn.LogSoftmax(dim=1)(logits)
+            # loss = -log_probs.diagonal().mean()
+            
+            batch_size = audio_features_4_loss.shape[1]
+            length = audio_features_4_loss.shape[0]
+            feature_dim = audio_features_4_loss.shape[2]
+            similarity = self.similarity_function(inputs_embeds.mean(-1),audio_features_4_loss.mean(-1)).mean(-1)
+            anchor_dot_contrast = self.similarity_function(inputs_embeds.expand((length, length, batch_size, feature_dim)).transpose(0,2),
+                                                        audio_features_4_loss.expand((length, length, batch_size, feature_dim)).transpose(0,2))
+            loss = -nn.LogSoftmax(1)(anchor_dot_contrast).diagonal().sum()            
             ######
 
             # print(f"loss 222 is : {loss}")
