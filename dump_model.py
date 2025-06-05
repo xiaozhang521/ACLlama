@@ -410,14 +410,17 @@ def train():
 
     #torch.nn.init.xavier_uniform_(model.get_model().conv1.weight)
     #torch.nn.init.xavier_uniform_(model.get_model().conv2.weight)
-    torch.nn.init.xavier_uniform_(model.get_model().mm_projector1.weight)
+    torch.nn.init.xavier_uniform_(model.get_model().mm_projector1.weight, gain=1.0)
     # torch.nn.init.xavier_uniform_(model.get_model().mm_projector2.weight)
     
     def init_weights(m):
         if isinstance(m, torch.nn.Linear):
-            torch.nn.init.xavier_uniform_(m.weight)
+            torch.nn.init.xavier_uniform_(m.weight, gain=1.0)
             if m.bias is not None:
                 torch.nn.init.zeros_(m.bias)
+        elif isinstance(m, torch.nn.LayerNorm):
+            torch.nn.init.ones_(m.weight)
+            torch.nn.init.zeros_(m.bias)
 
     model.get_model().asr_transformer_encoder.apply(init_weights)
     

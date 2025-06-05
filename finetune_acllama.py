@@ -560,6 +560,12 @@ def train():
         lora_args,
     ) = parser.parse_args_into_dataclasses()
 
+    # print(f"model_args is : {model_args}")
+    # print(f"data_args is : {data_args}")
+    # print(f"training_args is : {training_args}")
+    # print(f"lora_args is : {lora_args}")
+    # exit(0)
+    
     # This serves for single-gpu qlora.
     if getattr(training_args, 'deepspeed', None) and int(os.environ.get("WORLD_SIZE", 1)) == 1:
         training_args.distributed_state.distributed_type = DistributedType.DEEPSPEED
@@ -718,6 +724,7 @@ def train():
     
     #######
     audio_data_collator = AudioDataCollator(tokenizer, dataset=data_module["train_dataset"])
+    model = model.to(torch.float16)  # 再转一次，确保强制覆盖
     #######
     
     # Start trainner
@@ -733,6 +740,7 @@ def train():
         #trainer.train(resume_from_checkpoint="/wangbenyou/zhangyuhao/llms/ACLlama_e2/output/ACLlama_lora_libri_ctc_new_data/checkpoint-1700/")
         # trainer.train(resume_from_checkpoint="/mntcephfs/data/med/speech_llm/output/speech_llm_align_clean/checkpoint-11500")
         trainer.train()
+    # trainer.train()
     trainer.save_state()
 
     safe_save_model_for_hf_trainer(trainer=trainer, output_dir=training_args.output_dir, bias=lora_args.lora_bias)

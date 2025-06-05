@@ -15,6 +15,11 @@ from transformers import (
     WhisperModel,
 )
 
+######
+from transformers.models.whisper.modeling_whisper import WhisperAttention
+from transformers.activations import ACT2FN
+######
+
 IGNORE_TOKEN_ID = LabelSmoother.ignore_index
 
 
@@ -67,6 +72,96 @@ class LookBackModule(nn.Module):
         #x = self.ffn_layer_norm(x)
         return x
 
+
+########
+# Copied from transformers.models.mbart.modeling_mbart.MBartEncoderLayer with MBart->Whisper, MBART->WHISPER
+class MYEncoderLayer(nn.Module):
+    def __init__(self, d_model, nhead, dim_feedforward, dropout, rms_norm_eps=1e-03):
+        super().__init__()
+        self.embed_dim = d_model
+
+        self.self_attn = WhisperAttention(
+            embed_dim=self.embed_dim,
+            num_heads=nhead,
+            dropout=dropout,
+            config=None,
+        )
+        self.self_attn_layer_norm = nn.LayerNorm(self.embed_dim, eps=rms_norm_eps)
+        self.dropout = dropout
+        self.activation_fn = ACT2FN["gelu"]
+        self.activation_dropout = dropout
+        self.fc1 = nn.Linear(self.embed_dim, dim_feedforward)
+        self.fc2 = nn.Linear(dim_feedforward, self.embed_dim)
+        self.final_layer_norm = nn.LayerNorm(self.embed_dim, eps=rms_norm_eps)
+
+    def forward(
+        self,
+        hidden_states: torch.Tensor,
+        attention_mask = None,
+        layer_head_mask = None,
+        output_attentions = False,
+    ) -> torch.Tensor:
+        """
+        Args:
+            hidden_states (`torch.FloatTensor`): input to the layer of shape `(batch, seq_len, embed_dim)`
+            attention_mask (`torch.FloatTensor`): attention mask of size
+                `(batch, 1, tgt_len, src_len)` where padding elements are indicated by very large negative values.
+            layer_head_mask (`torch.FloatTensor`): mask for attention heads in a given layer of size
+                `(encoder_attention_heads,)`.
+            output_attentions (`bool`, *optional*):
+                Whether or not to return the attentions tensors of all attention layers. See `attentions` under
+                returned tensors for more detail.
+        """
+        residual = hidden_states
+        hidden_states = self.self_attn_layer_norm(hidden_states)
+        
+        # print(f"hidden_states is : {hidden_states}")
+        # print(f"attention_mask is : {attention_mask}")
+        
+        hidden_states, attn_weights, _ = self.self_attn(
+            hidden_states=hidden_states,
+            attention_mask=attention_mask,
+            layer_head_mask=layer_head_mask,
+            output_attentions=output_attentions,
+        )
+        
+        # print(f"hidden_states after attn is : {hidden_states}")
+
+        hidden_states = nn.functional.dropout(hidden_states, p=self.dropout, training=self.training)
+        hidden_states = residual + hidden_states
+
+        # print(f"hidden_states before ffn  ln is : {hidden_states}")
+        # print("before norm:", hidden_states.min(), hidden_states.max(), hidden_states.mean())
+
+        residual = hidden_states
+        hidden_states = self.final_layer_norm(hidden_states)
+        
+        # print(f"hidden_states before ffn is : {hidden_states}")
+
+        hidden_states = self.activation_fn(self.fc1(hidden_states))
+        hidden_states = nn.functional.dropout(hidden_states, p=self.activation_dropout, training=self.training)
+        hidden_states = self.fc2(hidden_states)
+        
+        # print(f"hidden_states after ffn is : {hidden_states}")
+
+        hidden_states = nn.functional.dropout(hidden_states, p=self.dropout, training=self.training)
+        hidden_states = residual + hidden_states
+
+        if hidden_states.dtype == torch.float16 and (
+            torch.isinf(hidden_states).any() or torch.isnan(hidden_states).any()
+        ):
+            clamp_value = torch.finfo(hidden_states.dtype).max - 1000
+            hidden_states = torch.clamp(hidden_states, min=-clamp_value, max=clamp_value)
+
+        outputs = (hidden_states,)
+
+        if output_attentions:
+            outputs += (attn_weights,)
+
+        return outputs
+########
+
+
 class ACLlamaModel(LlamaModel):
     config_class = ACLlamaConfig
 
@@ -82,20 +177,27 @@ class ACLlamaModel(LlamaModel):
             #self.conv2 = nn.Conv1d(4096, 4096, kernel_size=3, stride=2, padding=1)
             self.mm_projector1 = nn.Linear(config.adapter_size*2 , config.hidden_size)
             #self.relu = nn.ReLU()
-            #self.mm_projector2 = nn.Linear(config.hidden_size , config.hidden_size)
-            asr_encoder_layer = nn.TransformerEncoderLayer(
+            # self.mm_projector2 = nn.Linear(config.hidden_size , config.hidden_size)
+            # asr_encoder_layer = nn.TransformerEncoderLayer(
+            #     d_model=config.hidden_size,
+            #     nhead=config.num_attention_heads,
+            #     dim_feedforward=config.hidden_size*2,
+            #     dropout=0.1,
+            #     norm_first=True
+            # )
+            self.lbm =  LookBackModule(config)
+            self.out_norm = nn.LayerNorm(config.hidden_size)
+            self.audio_feature_head = nn.Linear(config.hidden_size, config.vocab_size, bias=False)
+            # self.asr_transformer_encoder = nn.TransformerEncoder(asr_encoder_layer, num_layers=1)
+
+        ########
+            self.asr_transformer_encoder = MYEncoderLayer(
                 d_model=config.hidden_size,
                 nhead=config.num_attention_heads,
                 dim_feedforward=config.hidden_size*2,
                 dropout=0.1,
-                norm_first=True
             )
-            self.lbm =  LookBackModule(config)
-            self.out_norm = nn.LayerNorm(config.hidden_size)
-            self.audio_feature_head = nn.Linear(config.hidden_size, config.vocab_size, bias=False)
-            self.asr_transformer_encoder = nn.TransformerEncoder(asr_encoder_layer, num_layers=1)
-
-        ########
+        
         self.avg_pooler = nn.AvgPool1d(2, stride=2)
         ########
 
@@ -129,14 +231,37 @@ class ACLlamaModel(LlamaModel):
             #    audio_features = audio_tower.encoder(audios).last_hidden_state
             #for audio_feature in audio_features:
             #    audio_feature = audio_feature.unsqueeze(0)
+
+            for name, param in audio_tower.named_parameters():
+                print(param.dtype)
+                        
+            # print(f"audio i s: {audios[0].dtype}")
+                        
             for audio in audios:
                 with torch.no_grad():
                     audio=audio.unsqueeze(0)
                     audio_feature = audio_tower.encoder(audio).last_hidden_state
 
+                # print(f"audio_feature i s: {audio_feature.dtype}")
+                
                 audio_feature = audio_feature.view(audio_feature.shape[0], audio_feature.shape[1]//2, 2 * audio_feature.shape[2])
                 audio_feature = self.mm_projector1(audio_feature)
-                audio_feature = self.asr_transformer_encoder(audio_feature)
+                # audio_feature = self.asr_transformer_encoder(audio_feature)
+                
+                # print(f"audio_feature 222 i s: {self.mm_projector1}")
+                # print(f"audio_feature 222 i s: {self.mm_projector1.original_module.weight.dtype}")
+                # print(f"audio_feature 222 i s: {self.mm_projector1.modules_to_save.default.weight.dtype}")
+                # print(f"audio_feature 222 i s: {audio_feature.dtype}")
+                # print(f"audio_feature is : {audio_feature}")
+
+                # audio_feature_mask = torch.zeros_like(audio_feature).bool()
+                # audio_feature_mask = audio_feature_mask[:, :, 0].squeeze(-1).transpose(0, 1)
+                # audio_feature = self.asr_transformer_encoder(audio_feature, src_key_padding_mask=audio_feature_mask)
+
+                audio_feature = self.asr_transformer_encoder(audio_feature, None, None)[0]
+                
+                # print(f"audio_feature after asr_transformer_encoder is : {audio_feature}")
+                
                 audio_feature = self.out_norm(audio_feature)
                 audio_list.append(audio_feature[0])
 
@@ -158,11 +283,11 @@ class ACLlamaModel(LlamaModel):
             while audio_features_4_loss.size(2) // 2 - 1 > audio_feature_lengths.max():
                 audio_features_4_loss = self.avg_pooler(audio_features_4_loss)
             audio_features_4_loss = audio_features_4_loss.permute(0, 2, 1)
-            
-            # print("###############")
-            # print(f"audio_feature_lengths is : {audio_feature_lengths}")
+
+            # # print("###############")
+            # # print(f"audio_feature_lengths is : {audio_feature_lengths}")
             # print(f"audio_features_4_loss is : {audio_features_4_loss}")
-            # print(f"audio_features_4_loss is : {audio_features_4_loss.size()}")
+            # # print(f"audio_features_4_loss is : {audio_features_4_loss.size()}")
             # exit(0)
             ######
  
@@ -483,13 +608,32 @@ class ACLlamaForCausalLM(LlamaForCausalLM):
             # log_probs = nn.LogSoftmax(dim=1)(logits)
             # loss = -log_probs.diagonal().mean()
             
+            inputs_embeds_filter = inputs_embeds[:, :audio_features_4_loss.size(1), :]
+            
+            mask1 = torch.arange(inputs_embeds_filter.size(1), device=inputs_embeds_filter.device)[None, :] < audio_feature_lengths[:, None]
+            mask1 = mask1.unsqueeze(-1)  # [B, 512, 1]
+            
+            print(f"inputs_embeds_filter is : {inputs_embeds_filter.size()}")
+            print(f"audio_feature_lengths is : {audio_feature_lengths}")
+            print(f"mask1 is : {mask1.size()}")
+            print(f"audio_features_4_loss is : {audio_features_4_loss.size()}")
+            # print(f"inputs_embeds_filter is : {inputs_embeds_filter}")
+            # print(f"audio_features_4_loss is : {audio_features_4_loss}")
+            
             batch_size = audio_features_4_loss.shape[1]
             length = audio_features_4_loss.shape[0]
             feature_dim = audio_features_4_loss.shape[2]
-            similarity = self.similarity_function(inputs_embeds.mean(-1),audio_features_4_loss.mean(-1)).mean(-1)
-            anchor_dot_contrast = self.similarity_function(inputs_embeds.expand((length, length, batch_size, feature_dim)).transpose(0,2),
-                                                        audio_features_4_loss.expand((length, length, batch_size, feature_dim)).transpose(0,2))
-            loss = -nn.LogSoftmax(1)(anchor_dot_contrast).diagonal().sum()            
+            similarity = self.similarity_function(inputs_embeds_filter.mean(-1), audio_features_4_loss.mean(-1)).mean(-1)
+            anchor_dot_contrast = self.similarity_function(inputs_embeds_filter.expand((length, length, batch_size, feature_dim)).transpose(0,2),
+            audio_features_4_loss.expand((length, length, batch_size, feature_dim)).transpose(0,2))
+            
+            # print(f"anchor_dot_contrast is : {anchor_dot_contrast}")
+            print(f"anchor_dot_contrast is : {anchor_dot_contrast.size()}")
+
+            loss = -nn.LogSoftmax(1)(anchor_dot_contrast).diagonal().sum()     
+            print(f"loss is : {loss}")
+
+            exit(0)                   
             ######
 
             # print(f"loss 222 is : {loss}")

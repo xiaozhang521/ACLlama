@@ -25,13 +25,14 @@ torchrun \
     --master_port 6601 \
     finetune_acllama.py \
     --audio_model_name_or_path "/data/s50042884/huggingface_model/whisper-large-v3" \
-    --text_model_name_or_path "/data/s50042884/my_code/ACLlama_output/ACLlama_lora" \
+    --text_model_name_or_path "../ACLlama_output/ACLlama_lora" \
     --data_path "/data/s50042884/huggingface_model/libri_train_update.json" \
     --output_dir ${output_tag} \
     --num_train_epochs 40 \
-    --per_device_train_batch_size 32 \
+    --fp16 True \
+    --per_device_train_batch_size 16 \
     --per_device_eval_batch_size 1 \
-    --gradient_accumulation_steps 8 \
+    --gradient_accumulation_steps 16 \
     --evaluation_strategy "no" \
     --save_strategy "steps" \
     --save_steps 100 \
