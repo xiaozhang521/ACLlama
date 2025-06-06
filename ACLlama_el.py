@@ -18,6 +18,7 @@ from transformers import (
 ######
 from transformers.models.whisper.modeling_whisper import WhisperAttention
 from transformers.activations import ACT2FN
+import numpy as np
 ######
 
 IGNORE_TOKEN_ID = LabelSmoother.ignore_index
@@ -231,9 +232,6 @@ class ACLlamaModel(LlamaModel):
             #    audio_features = audio_tower.encoder(audios).last_hidden_state
             #for audio_feature in audio_features:
             #    audio_feature = audio_feature.unsqueeze(0)
-
-            for name, param in audio_tower.named_parameters():
-                print(param.dtype)
                         
             # print(f"audio i s: {audios[0].dtype}")
                         
@@ -406,6 +404,7 @@ class ACLlamaForCausalLM(LlamaForCausalLM):
         
         ########
         self.similarity_function = nn.CosineSimilarity(dim=-1)
+        self.logit_scale = nn.Parameter(torch.ones(1) * np.log(1 / 0.07))
         ########
 
     def get_model(self):
@@ -609,31 +608,52 @@ class ACLlamaForCausalLM(LlamaForCausalLM):
             # loss = -log_probs.diagonal().mean()
             
             inputs_embeds_filter = inputs_embeds[:, :audio_features_4_loss.size(1), :]
-            
             mask1 = torch.arange(inputs_embeds_filter.size(1), device=inputs_embeds_filter.device)[None, :] < audio_feature_lengths[:, None]
             mask1 = mask1.unsqueeze(-1)  # [B, 512, 1]
             
-            print(f"inputs_embeds_filter is : {inputs_embeds_filter.size()}")
-            print(f"audio_feature_lengths is : {audio_feature_lengths}")
-            print(f"mask1 is : {mask1.size()}")
-            print(f"audio_features_4_loss is : {audio_features_4_loss.size()}")
-            # print(f"inputs_embeds_filter is : {inputs_embeds_filter}")
+            # audio_features_4_loss[~mask1.squeeze()] = 0
+            
+            # print(f"inputs_embeds_filter is : {inputs_embeds_filter.size()}")
+            # print(f"audio_feature_lengths is : {audio_feature_lengths}")
+            # print(f"mask1 is : {mask1.size()}")
+            # print(f"mask1 is : {mask1}")
+            # print(f"audio_features_4_loss is : {audio_features_4_loss.size()}")
             # print(f"audio_features_4_loss is : {audio_features_4_loss}")
+            # # print(f"inputs_embeds_filter is : {inputs_embeds_filter}")
+            # # print(f"audio_features_4_loss is : {audio_features_4_loss}")
             
-            batch_size = audio_features_4_loss.shape[1]
-            length = audio_features_4_loss.shape[0]
-            feature_dim = audio_features_4_loss.shape[2]
-            similarity = self.similarity_function(inputs_embeds_filter.mean(-1), audio_features_4_loss.mean(-1)).mean(-1)
-            anchor_dot_contrast = self.similarity_function(inputs_embeds_filter.expand((length, length, batch_size, feature_dim)).transpose(0,2),
-            audio_features_4_loss.expand((length, length, batch_size, feature_dim)).transpose(0,2))
+            # batch_size = audio_features_4_loss.shape[1]
+            # length = audio_features_4_loss.shape[0]
+            # feature_dim = audio_features_4_loss.shape[2]
+            # similarity = self.similarity_function(inputs_embeds_filter.mean(-1), audio_features_4_loss.mean(-1)).mean(-1)
+            # anchor_dot_contrast = self.similarity_function(inputs_embeds_filter.expand((length, length, batch_size, feature_dim)).transpose(0,2),
+            # audio_features_4_loss.expand((length, length, batch_size, feature_dim)).transpose(0,2))
             
-            # print(f"anchor_dot_contrast is : {anchor_dot_contrast}")
-            print(f"anchor_dot_contrast is : {anchor_dot_contrast.size()}")
+            # # print(f"anchor_dot_contrast is : {anchor_dot_contrast}")
+            # print(f"anchor_dot_contrast is : {anchor_dot_contrast.size()}")
 
-            loss = -nn.LogSoftmax(1)(anchor_dot_contrast).diagonal().sum()     
-            print(f"loss is : {loss}")
+            # loss = -nn.LogSoftmax(1)(anchor_dot_contrast).diagonal().sum()     
+            # print(f"loss is : {loss}")
 
-            exit(0)                   
+            with torch.cuda.amp.autocast(enabled=False):  # 禁用 autocast
+                audio_features = audio_features_4_loss.mean(1).to(torch.float32)
+                text_features = inputs_embeds_filter.mean(1).to(torch.float32)
+
+                # normalized features
+                audio_features = audio_features / audio_features.norm(dim=1, keepdim=True).clamp(min=1e-8)
+                text_features = text_features / text_features.norm(dim=1, keepdim=True).clamp(min=1e-8)
+                
+                # cosine similarity as logits
+                logit_scale = self.logit_scale.exp()
+                logits_per_audio = logit_scale * audio_features @ text_features.t()
+                logits_per_text = logits_per_audio.t()
+
+                labels = torch.arange(audio_features.size(0), device=logits_per_audio.device)
+                loss_fn = nn.CrossEntropyLoss()
+                loss_i = loss_fn(logits_per_audio, labels)
+                loss_t = loss_fn(logits_per_text, labels)
+                loss = (loss_i + loss_t)/2
+
             ######
 
             # print(f"loss 222 is : {loss}")

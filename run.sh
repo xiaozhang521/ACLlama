@@ -14,40 +14,41 @@ export NCCL_DEBUG=INFO
 export TORCH_DISTRIBUTED_DEBUG=DETAIL
 
 # output_tag="../ACLlama_output/ACLlama_lora_finetune"
-output_tag="../ACLlama_output/ACLlama_lora_finetune_add_contrastive_loss"
+# output_tag="../ACLlama_output/ACLlama_lora_finetune_add_contrastive_loss"
+output_tag="../ACLlama_output/ACLlama_lora_finetune_add_clip_contrastive_loss"
 
 export CUDA_VISIBLE_DEVICES=${device[@]}
-torchrun \
-    --nproc_per_node 8 \
-    --nnodes 1 \
-    --node_rank 0 \
-    --master_addr localhost \
-    --master_port 6601 \
-    finetune_acllama.py \
-    --audio_model_name_or_path "/data/s50042884/huggingface_model/whisper-large-v3" \
-    --text_model_name_or_path "../ACLlama_output/ACLlama_lora" \
-    --data_path "/data/s50042884/huggingface_model/libri_train_update.json" \
-    --output_dir ${output_tag} \
-    --num_train_epochs 40 \
-    --fp16 True \
-    --per_device_train_batch_size 16 \
-    --per_device_eval_batch_size 1 \
-    --gradient_accumulation_steps 16 \
-    --evaluation_strategy "no" \
-    --save_strategy "steps" \
-    --save_steps 100 \
-    --save_total_limit 1 \
-    --learning_rate 1e-4 \
-    --weight_decay 0.1 \
-    --adam_beta2 0.95 \
-    --warmup_ratio 0.01 \
-    --lr_scheduler_type "cosine" \
-    --logging_steps 1 \
-    --report_to "none" \
-    --model_max_length 512 \
-    --gradient_checkpointing True \
-    --deepspeed "./config/ds_config_zero2.json" \
-    --use_lora
+cmd="torchrun
+    --nproc_per_node 8
+    --nnodes 1
+    --node_rank 0
+    --master_addr localhost
+    --master_port 6601
+    finetune_acllama.py
+    --audio_model_name_or_path "/data/s50042884/huggingface_model/whisper-large-v3"
+    --text_model_name_or_path "../ACLlama_output/ACLlama_lora"
+    --data_path "/data/s50042884/my_code/audio_pretrain/data/audio_caps_formatted.json"
+    --output_dir ${output_tag}
+    --num_train_epochs 40
+    --fp16 True
+    --per_device_train_batch_size 16
+    --per_device_eval_batch_size 1
+    --gradient_accumulation_steps 16
+    --evaluation_strategy "no"
+    --save_strategy "steps"
+    --save_steps 100
+    --save_total_limit 1
+    --learning_rate 1e-4
+    --weight_decay 0.1
+    --adam_beta2 0.95
+    --warmup_ratio 0.01
+    --lr_scheduler_type "cosine"
+    --logging_steps 1
+    --report_to "none"
+    --model_max_length 512
+    --gradient_checkpointing True
+    --deepspeed "./config/ds_config_zero2.json"
+    --use_lora"
 
     # --per_device_train_batch_size 32 \
     # --per_device_eval_batch_size 1 \
@@ -55,6 +56,42 @@ torchrun \
     # --deepspeed "./config/ds_config_zero2.json" \
     # --fp16 True \
     # --bf16 True \
+
+save_cmd="${output_tag}/train.log"
+echo $cmd
+eval $cmd 2>&1 | tee $save_cmd
+
+# torchrun \
+#     --nproc_per_node 8 \
+#     --nnodes 1 \
+#     --node_rank 0 \
+#     --master_addr localhost \
+#     --master_port 6601 \
+#     finetune_acllama.py \
+#     --audio_model_name_or_path "/data/s50042884/huggingface_model/whisper-large-v3" \
+#     --text_model_name_or_path "../ACLlama_output/ACLlama_lora" \
+#     --data_path "/data/s50042884/my_code/audio_pretrain/data/audio_caps_formatted.json" \
+#     --output_dir ${output_tag} \
+#     --num_train_epochs 40 \
+#     --fp16 True \
+#     --per_device_train_batch_size 16 \
+#     --per_device_eval_batch_size 1 \
+#     --gradient_accumulation_steps 16 \
+#     --evaluation_strategy "no" \
+#     --save_strategy "steps" \
+#     --save_steps 100 \
+#     --save_total_limit 1 \
+#     --learning_rate 1e-4 \
+#     --weight_decay 0.1 \
+#     --adam_beta2 0.95 \
+#     --warmup_ratio 0.01 \
+#     --lr_scheduler_type "cosine" \
+#     --logging_steps 1 \
+#     --report_to "none" \
+#     --model_max_length 512 \
+#     --gradient_checkpointing True \
+#     --deepspeed "./config/ds_config_zero2.json" \
+#     --use_lora
 
 # python3 finetune_acllama.py \
 #     --audio_model_name_or_path "/data/s50042884/huggingface_model/whisper-large-v3" \
