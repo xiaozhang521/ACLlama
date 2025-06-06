@@ -198,7 +198,11 @@ class ACLlamaModel(LlamaModel):
                 dim_feedforward=config.hidden_size*2,
                 dropout=0.1,
             )
-        
+
+        self.text_projector = nn.Sequential(nn.Linear(config.hidden_size , config.hidden_size*2),
+                                            ACT2FN["gelu"],
+                                            nn.Linear(config.hidden_size*2 , config.hidden_size))
+
         self.avg_pooler = nn.AvgPool1d(2, stride=2)
         ########
 
@@ -221,6 +225,10 @@ class ACLlamaModel(LlamaModel):
 
         if inputs_embeds is None:
             inputs_embeds = self.embed_tokens(input_ids)
+
+        ########
+        inputs_embeds = self.text_projector(inputs_embeds)
+        ########
 
         audio_tower = getattr(self, 'audio_tower', None)
         if audio_tower is not None and (input_ids.shape[1] != 1 or self.training) and audios is not None:
@@ -609,7 +617,7 @@ class ACLlamaForCausalLM(LlamaForCausalLM):
             
             inputs_embeds_filter = inputs_embeds[:, :audio_features_4_loss.size(1), :]
             mask1 = torch.arange(inputs_embeds_filter.size(1), device=inputs_embeds_filter.device)[None, :] < audio_feature_lengths[:, None]
-            mask1 = mask1.unsqueeze(-1)  # [B, 512, 1]
+            # mask1 = mask1.unsqueeze(-1)  # [B, 512, 1]
             
             # audio_features_4_loss[~mask1.squeeze()] = 0
             
@@ -636,6 +644,9 @@ class ACLlamaForCausalLM(LlamaForCausalLM):
             # print(f"loss is : {loss}")
 
             with torch.cuda.amp.autocast(enabled=False):  # 禁用 autocast
+                audio_features_4_loss[mask1] = 0
+                inputs_embeds_filter[mask1] = 0
+                
                 audio_features = audio_features_4_loss.mean(1).to(torch.float32)
                 text_features = inputs_embeds_filter.mean(1).to(torch.float32)
 

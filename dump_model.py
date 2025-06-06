@@ -423,6 +423,7 @@ def train():
             torch.nn.init.zeros_(m.bias)
 
     model.get_model().asr_transformer_encoder.apply(init_weights)
+    model.get_model().text_projector.apply(init_weights)
     
     #update embeddings
     embeddings=model.get_input_embeddings()
@@ -462,6 +463,8 @@ def train():
     #audio_config.audio_patch_token = tokenizer.convert_tokens_to_ids([DEFAULT_AUDIO_PATCH_TOKEN])[0]
     #audio_config.audio_start_token, audio_config.audio_end_token = tokenizer.convert_tokens_to_ids([DEFAULT_AUDIO_START_TOKEN, DEFAULT_AUDIO_END_TOKEN])
     audio_config.audio_patch_token = tokenizer.get_vocab()["<audio_patch>"]
+
+    print(f"model is : {model}")
 
     model.save_pretrained(training_args.output_dir)
     model.config.save_pretrained(training_args.output_dir)
