@@ -147,7 +147,7 @@ def safe_save_model_for_hf_trainer(trainer: transformers.Trainer, output_dir: st
             state_dict = trainer.model.state_dict()
     if trainer.args.should_save and trainer.args.local_rank == 0:
         # trainer._save(output_dir, state_dict=state_dict)
-        trainer.save_model(output_dir, state_dict=state_dict)
+        trainer.save_model(output_dir)
 
 def preprocess(
         sources,
@@ -641,7 +641,7 @@ def train():
     if training_args.use_lora:
         #modules_to_save = None #["embed_tokens", "lm_head"]
         #modules_to_save = ["mm_projector1","mm_projector2","asr_encoder_layer"]
-        modules_to_save = ["mm_projector1","asr_transformer_encoder","out_norm","lbm"]
+        modules_to_save = ["mm_projector1","out_norm","lbm"]
 
         def find_all_linear_names(args, model):
             import bitsandbytes as bnb
