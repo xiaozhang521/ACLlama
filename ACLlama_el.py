@@ -588,6 +588,12 @@ class ACLlamaForCausalLM(LlamaForCausalLM):
                 
                 return loss, similarity
             
+            #########
+            min_seg_length = min(inputs_embeds.size(1), audio_features_4_loss.size(1))
+            inputs_embeds_filter = inputs_embeds[:, :min_seg_length, :]
+            audio_features_4_loss = audio_features_4_loss[:, :min_seg_length, :]
+            #########
+            
             
             #########
             # encoder_embedding1: [B, 512, 3072]
@@ -612,8 +618,10 @@ class ACLlamaForCausalLM(LlamaForCausalLM):
                 masked_mean1.unsqueeze(1),  # [B, 1, D]
                 mean2.unsqueeze(0)          # [1, B, D]
             )
+            
+            temperature = 1.0
             # === Step 3: InfoNCE loss ===
-            logits = similarity_matrix / 1.0  # [B, B]
+            logits = similarity_matrix / temperature  # [B, B]
             log_probs = nn.LogSoftmax(dim=1)(logits)
             loss = -log_probs.diagonal().mean()
             #########

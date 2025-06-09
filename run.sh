@@ -1,7 +1,7 @@
 #! /bin/bash
 
-device=(0,1,2,3)
-gpu_num=4
+device=(0,1,2,3,4,5,6,7)
+gpu_num=8
 # device=(0)
 # gpu_num=1
 
@@ -19,31 +19,31 @@ output_tag="../ACLlama_output/ACLlama_lora_finetune_add_clip_contrastive_loss"
 
 export CUDA_VISIBLE_DEVICES=${device[@]}
 cmd="torchrun
-    --nproc_per_node 4
+    --nproc_per_node 8
     --nnodes 1
     --node_rank 0
     --master_addr localhost
     --master_port 6601
     finetune_acllama.py
-    --audio_model_name_or_path "/linzhihang/LLMs/whisper-v3"
+    --audio_model_name_or_path "/data/s50042884/huggingface_model/whisper-large-v3"
     --text_model_name_or_path "../ACLlama_output/ACLlama_lora"
-    --data_path "/linzhihang/zhangyuhao/ACLlama_train_data/libri_train.json"
+    --data_path "/data/s50042884/my_code/audio_pretrain/data/audio_caps_formatted.json"
     --output_dir ${output_tag}
-    --num_train_epochs 1
+    --num_train_epochs 120
     --fp16 True
-    --per_device_train_batch_size 4
+    --per_device_train_batch_size 16
     --per_device_eval_batch_size 1
     --gradient_accumulation_steps 16
     --evaluation_strategy "no"
-    --save_strategy "epoch"
-    --save_steps 50
-    --save_total_limit 2
+    --save_strategy "steps"
+    --save_steps 300
+    --save_total_limit 100
     --learning_rate 1e-4
     --weight_decay 0.1
     --adam_beta2 0.95
     --warmup_ratio 0.01
     --lr_scheduler_type "cosine"
-    --logging_steps 10
+    --logging_steps 1
     --report_to "none"
     --model_max_length 512
     --gradient_checkpointing True

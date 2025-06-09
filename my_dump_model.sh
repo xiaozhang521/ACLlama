@@ -2,7 +2,7 @@
 
 NCCL_P2P_DISABLE=1 \
 NCCL_IB_DISABLE=1 \
-CUDA_VISIBLE_DEVICES=4 \
+CUDA_VISIBLE_DEVICES=6 \
 # torchrun \
 # --nproc_per_node 1 \
 # --nnodes 1 \
@@ -39,9 +39,9 @@ CUDA_VISIBLE_DEVICES=4 \
 
 
 python3 dump_model.py \
---audio_model_name_or_path "/linzhihang/LLMs/whisper-v3" \
---text_model_name_or_path "/linzhihang/LLMs/llama_3.2_3B" \
---data_path "/linzhihang/zhangyuhao/ACLlama_train_data/libri_train.json" \
+--audio_model_name_or_path "/data/s50042884/huggingface_model/whisper-large-v3" \
+--text_model_name_or_path "/data/s50042884/huggingface_model/Llama-3.2-3B" \
+--data_path "/data/s50042884/huggingface_model/libri_train_update.json" \
 --fp16 True \
 --output_dir "../ACLlama_output/ACLlama_lora" \
 --num_train_epochs 20 \
