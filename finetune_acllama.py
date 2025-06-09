@@ -146,8 +146,8 @@ def safe_save_model_for_hf_trainer(trainer: transformers.Trainer, output_dir: st
         else:
             state_dict = trainer.model.state_dict()
     if trainer.args.should_save and trainer.args.local_rank == 0:
-        trainer._save(output_dir, state_dict=state_dict)
-
+        # trainer._save(output_dir, state_dict=state_dict)
+        trainer.save_model(output_dir, state_dict=state_dict)
 
 def preprocess(
         sources,
@@ -724,6 +724,8 @@ def train():
     
     #######
     audio_data_collator = AudioDataCollator(tokenizer, dataset=data_module["train_dataset"])
+    # from dataclasses import replace
+    # training_args = replace(training_args, save_safetensors=False)
     model = model.to(torch.float16)  # 再转一次，确保强制覆盖
     #######
     

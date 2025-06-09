@@ -29,15 +29,15 @@ cmd="torchrun
     --text_model_name_or_path "../ACLlama_output/ACLlama_lora"
     --data_path "/data/s50042884/my_code/audio_pretrain/data/audio_caps_formatted.json"
     --output_dir ${output_tag}
-    --num_train_epochs 40
+    --num_train_epochs 120
     --fp16 True
     --per_device_train_batch_size 16
     --per_device_eval_batch_size 1
     --gradient_accumulation_steps 16
     --evaluation_strategy "no"
     --save_strategy "steps"
-    --save_steps 100
-    --save_total_limit 1
+    --save_steps 300
+    --save_total_limit 100
     --learning_rate 1e-4
     --weight_decay 0.1
     --adam_beta2 0.95
