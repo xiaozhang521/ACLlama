@@ -78,17 +78,6 @@ def process_items(thread_id, subset, args, CONFIG, return_dict):
     device = CONFIG.devices[thread_id % len(CONFIG.devices)]  # 根据线程ID选择设备
     print(f"Thread-{thread_id} running on {device}")
 
-    import glob
-    from safetensors.torch import load_file
-    shard_files = sorted(glob.glob(os.path.join(args.base_model_path, "adapter_model-*.safetensors")))
-    if not shard_files:
-        shard_files = sorted(glob.glob(os.path.join(args.base_model_path, "adapter_model.safetensors")))
-    need_combined_weights = {}
-    for shard in shard_files:
-        shard_state = load_file(shard)
-        need_combined_weights.update(shard_state)
-    print(f"need_combined_weights is : {need_combined_weights.keys()}")
-
     quantization_config = None
     model = ACLlamaForCausalLM.from_pretrained(
         args.base_model_path,
@@ -96,6 +85,27 @@ def process_items(thread_id, subset, args, CONFIG, return_dict):
         torch_dtype=torch.float16,
         quantization_config=quantization_config,
     )
+    
+    import glob
+    from safetensors.torch import load_file
+    shard_files = sorted(glob.glob(os.path.join(args.peft_model_id, "adapter_model-*.safetensors")))
+    if not shard_files:
+        shard_files = sorted(glob.glob(os.path.join(args.peft_model_id, "adapter_model.safetensors")))
+    need_combined_weights = {}
+    for shard in shard_files:
+        shard_state = load_file(shard)
+        need_combined_weights.update(shard_state)
+    print(f"need_combined_weights is : {need_combined_weights.keys()}")
+    # new_sd = {}
+    # for k, v in need_combined_weights.items():
+    #     if ".lora_A.weight" in k and ".default" not in k:
+    #         k = k.replace(".lora_A.weight", ".lora_A.default.weight")
+    #     if ".lora_B.weight" in k and ".default" not in k:
+    #         k = k.replace(".lora_B.weight", ".lora_B.default.weight")
+    #     new_sd[k] = v
+
+    # torch.save(new_sd, os.path.join(args.peft_model_id, "adapter_model/patched.bin"))
+    
     for module in model.model.audio_tower:
         module.to(device)
     torch.cuda.empty_cache()
@@ -109,11 +119,13 @@ def process_items(thread_id, subset, args, CONFIG, return_dict):
 
     # LoRA
     lora_config = PeftConfig.from_pretrained(args.peft_model_id)
+    # model = PeftModel.from_pretrained(model, os.path.join(args.peft_model_id, "adapter_model/patched.bin"), config=lora_config, adapter_name="default").to(
     model = PeftModel.from_pretrained(model, args.peft_model_id, config=lora_config).to(
         dtype=torch.float16, device=device
     )
     torch.cuda.empty_cache()
     model.eval()
+
 
     DEFAULT_AUDIO_PATCH_TOKEN = "<audio_patch>"
     audio_placeholder = DEFAULT_AUDIO_PATCH_TOKEN * CONFIG.audio_token_len

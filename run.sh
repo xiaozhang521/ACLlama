@@ -15,7 +15,8 @@ export TORCH_DISTRIBUTED_DEBUG=DETAIL
 
 # output_tag="../ACLlama_output/ACLlama_lora_finetune"
 # output_tag="../ACLlama_output/ACLlama_lora_finetune_add_contrastive_loss"
-output_tag="../ACLlama_output/ACLlama_lora_finetune_add_clip_contrastive_loss"
+# output_tag="../ACLlama_output/ACLlama_lora_finetune_add_clip_contrastive_loss"
+output_tag="../ACLlama_output/whisper-large-v3-and-Llama-3.2-3B-align"
 
 export CUDA_VISIBLE_DEVICES=${device[@]}
 cmd="torchrun
@@ -27,13 +28,13 @@ cmd="torchrun
     finetune_acllama.py
     --audio_model_name_or_path "/data/s50042884/huggingface_model/whisper-large-v3"
     --text_model_name_or_path "../ACLlama_output/ACLlama_lora"
-    --data_path "/data/s50042884/my_code/audio_pretrain/data/audio_caps_formatted.json"
+    --data_path "/data/s50042884/huggingface_model/libri_train_update.json"
     --output_dir ${output_tag}
-    --num_train_epochs 120
+    --num_train_epochs 40
     --fp16 True
-    --per_device_train_batch_size 16
+    --per_device_train_batch_size 8
     --per_device_eval_batch_size 1
-    --gradient_accumulation_steps 16
+    --gradient_accumulation_steps 32
     --evaluation_strategy "no"
     --save_strategy "steps"
     --save_steps 300

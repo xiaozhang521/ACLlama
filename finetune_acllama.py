@@ -145,9 +145,11 @@ def safe_save_model_for_hf_trainer(trainer: transformers.Trainer, output_dir: st
             )
         else:
             state_dict = trainer.model.state_dict()
+            
     if trainer.args.should_save and trainer.args.local_rank == 0:
         # trainer._save(output_dir, state_dict=state_dict)
-        trainer.save_model(output_dir)
+        trainer.save_model(output_dir, state_dict=state_dict)
+        # model.save_pretrained(output_dir)
 
 def preprocess(
         sources,
@@ -615,7 +617,6 @@ def train():
         torch_dtype=torch.float16
     )
 
-
     tokenizer = transformers.AutoTokenizer.from_pretrained(
         model_args.text_model_name_or_path,
         cache_dir=training_args.cache_dir,
@@ -734,18 +735,16 @@ def train():
         #model=model, tokenizer=tokenizer, args=training_args, callbacks=call_back_list, **data_module
         # model=model, tokenizer=tokenizer, args=training_args, **data_module
         #####
-        model=model, tokenizer=tokenizer, args=training_args, data_collator=audio_data_collator, **data_module
+        model=model, tokenizer=tokenizer, args=training_args, callbacks=call_back_list, data_collator=audio_data_collator, **data_module
         #####
     )
 
     with torch.autocast("cuda"):
         #trainer.train(resume_from_checkpoint="/wangbenyou/zhangyuhao/llms/ACLlama_e2/output/ACLlama_lora_libri_ctc_new_data/checkpoint-1700/")
-        # trainer.train(resume_from_checkpoint="/mntcephfs/data/med/speech_llm/output/speech_llm_align_clean/checkpoint-11500")
         trainer.train()
-    # trainer.train()
     trainer.save_state()
 
-    safe_save_model_for_hf_trainer(trainer=trainer, output_dir=training_args.output_dir, bias=lora_args.lora_bias)
+    # safe_save_model_for_hf_trainer(trainer=trainer, output_dir=training_args.output_dir, bias=lora_args.lora_bias, model=model)
 
 
 if __name__ == "__main__":
