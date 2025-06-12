@@ -309,7 +309,7 @@ class SupervisedDataset(Dataset):
     def __getitem__(self, i) -> Dict[str, torch.Tensor]:
         audio, _ = librosa.load(self.audio_paths[i], sr=CONFIG.sampling_rate)
         audio_feat = self.audio_processor(audio, sampling_rate=CONFIG.sampling_rate, return_tensors="pt").input_features
-        audio_feat = audio_feat.squeeze(0).to(CONFIG.device, dtype=torch.float16)
+        audio_feat = audio_feat.squeeze(0).to(CONFIG.device, dtype=torch.bfloat16)
         tmp_input_ids = torch.tensor(self.input_ids[i],dtype=torch.int)
         return dict(
             input_ids=self.input_ids[i],
@@ -404,7 +404,7 @@ class LazySupervisedDataset(Dataset):
         audio_path = ret["audio_paths"][0]
         audio, _ = librosa.load(audio_path, sr=CONFIG.sampling_rate)
         audio_feat = self.audio_processor(audio, sampling_rate=CONFIG.sampling_rate, return_tensors="pt").input_features
-        audio_feat = audio_feat.squeeze(0).to(torch.float16)
+        audio_feat = audio_feat.squeeze(0).to(torch.bfloat16)
 
         if len(ret["asr_targets"])>0:
             ret = dict(
@@ -452,7 +452,7 @@ def make_supervised_data_module(
 
 def get_quantization_config(model_args):
     if model_args.load_in_4bit:
-        compute_dtype = torch.float16
+        compute_dtype = torch.bfloat16
         # if model_args.torch_dtype not in {"auto", None}:
         #     compute_dtype = getattr(torch, model_args.torch_dtype)
 
@@ -646,6 +646,8 @@ def train():
     for name, param in model.named_parameters():
         if "audio_tower" in name and "decoder" in name:
             param.requires_grad = False
+        # if "audio_tower" in name and "encoder" in name and "conv" in name:
+        #     param.requires_grad = False
     #     print(f"name is : {name} param is : {param.device}, {param.dtype}")
     # exit(0)
 
@@ -682,7 +684,7 @@ def train():
     #training_args.restore_callback_states_from_checkpoint=True
     # show updated parameters
     print(count_parameters(model))
-    model = model.to(torch.float16)
+    model = model.to(torch.bfloat16)
     
     #######
     audio_data_collator = AudioDataCollator(tokenizer, dataset=data_module["train_dataset"])
