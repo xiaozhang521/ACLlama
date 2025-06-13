@@ -431,13 +431,15 @@ def train():
     new_embeddings.weight.data[:embeddings.num_embeddings] = embeddings.weight.data
     model.set_input_embeddings(new_embeddings)
 
-    import copy
     new_head = torch.nn.Linear(config.hidden_size, config.vocab_size+1, bias=False)
     new_head.weight.data[ : config.vocab_size] = model.lm_head.weight.data
     model.lm_head = new_head
+    
+    #######
+    import copy
     model.audio_feature_head = copy.deepcopy(new_head)
     model.model.audio_feature_head = copy.deepcopy(new_head)
-
+    #######
 
     config.vocab_size+=1
     model.config.vocab_size+=1
