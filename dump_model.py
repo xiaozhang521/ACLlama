@@ -23,6 +23,10 @@ from transformers import BitsAndBytesConfig
 # from ACLlama import ACLlamaForCausalLM
 from ACLlama_el import ACLlamaForCausalLM
 
+#######
+import torch.nn as nn
+#######
+
 IGNORE_TOKEN_ID = LabelSmoother.ignore_index
 
 
@@ -413,18 +417,6 @@ def train():
     torch.nn.init.xavier_uniform_(model.get_model().mm_projector1.weight, gain=1.0)
     # torch.nn.init.xavier_uniform_(model.get_model().mm_projector2.weight)
     
-    def init_weights(m):
-        if isinstance(m, torch.nn.Linear):
-            torch.nn.init.xavier_uniform_(m.weight, gain=1.0)
-            if m.bias is not None:
-                torch.nn.init.zeros_(m.bias)
-        elif isinstance(m, torch.nn.LayerNorm):
-            torch.nn.init.ones_(m.weight)
-            torch.nn.init.zeros_(m.bias)
-
-    model.get_model().asr_transformer_encoder.apply(init_weights)
-    model.get_model().text_projector.apply(init_weights)
-    
     #update embeddings
     embeddings=model.get_input_embeddings()
     new_embeddings = torch.nn.Embedding(embeddings.num_embeddings+1, embeddings.embedding_dim, embeddings.padding_idx).to(CONFIG.device,dtype=torch.float16)
@@ -439,6 +431,27 @@ def train():
     import copy
     model.audio_feature_head = copy.deepcopy(new_head)
     model.model.audio_feature_head = copy.deepcopy(new_head)
+    
+    def init_weights(m):
+        if isinstance(m, torch.nn.Linear):
+            torch.nn.init.xavier_uniform_(m.weight, gain=1.0)
+            if m.bias is not None:
+                torch.nn.init.zeros_(m.bias)
+        elif isinstance(m, torch.nn.LayerNorm):
+            torch.nn.init.ones_(m.weight)
+            torch.nn.init.zeros_(m.bias)
+    # def init_weights(module, std=0.02):
+    #     if isinstance(module, nn.Linear):
+    #         module.weight.data.normal_(mean=0.0, std=std)
+    #         if module.bias is not None:
+    #             module.bias.data.zero_()
+    #     elif isinstance(module, nn.Embedding):
+    #         module.weight.data.normal_(mean=0.0, std=std)
+    #         if module.padding_idx is not None:
+    #             module.weight.data[module.padding_idx].zero_()
+
+    model.get_model().asr_transformer_encoder.apply(init_weights)
+    # model.get_model().text_projector.apply(init_weights)
     #######
 
     config.vocab_size+=1

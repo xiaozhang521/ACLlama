@@ -642,7 +642,8 @@ def train():
     if training_args.use_lora:
         #modules_to_save = None #["embed_tokens", "lm_head"]
         #modules_to_save = ["mm_projector1","mm_projector2","asr_encoder_layer"]
-        modules_to_save = ["mm_projector1","out_norm","lbm"]
+        # modules_to_save = ["mm_projector1","out_norm","lbm"]
+        modules_to_save = ["mm_projector1", "asr_transformer_encoder", "out_norm", "lbm"]
 
         def find_all_linear_names(args, model):
             import bitsandbytes as bnb
@@ -688,6 +689,45 @@ def train():
        
         # Print peft trainable params
         model.print_trainable_parameters()
+
+    # #######
+    # import glob
+    # from safetensors.torch import load_file
+    # pretrained_encoder_model_path = "/data/s50042884/my_code/audio_pretrain/ACLlama_output/ACLlama_lora_finetune_add_clip_contrastive_loss_audio_caption_300epoch/checkpoint-5600/"
+    # shard_files = sorted(glob.glob(os.path.join(pretrained_encoder_model_path, "adapter_model-*.safetensors")))
+    # if not shard_files:
+    #     shard_files = sorted(glob.glob(os.path.join(pretrained_encoder_model_path, "adapter_model.safetensors")))
+    # need_combined_weights = {}
+    # for shard in shard_files:
+    #     shard_state = load_file(shard)
+    #     for item in shard_state.keys():
+    #         if "base_model.model.model.layers." in item:
+    #             continue
+            
+    #         def replace_ckpt_key_name(need_combined_weights, key_item, ckpt_name, ori_replaced_name, save_replaced_name):
+    #             replaced_item = key_item.replace(ckpt_name, ori_replaced_name)
+    #             need_combined_weights[replaced_item] = shard_state[key_item]
+    #             replaced_item = key_item.replace(ckpt_name, save_replaced_name)
+    #             need_combined_weights[replaced_item] = shard_state[key_item]
+    #             return need_combined_weights
+            
+    #         fix_item = item
+    #         if "mm_projector1.bias" in item:
+    #             need_combined_weights = replace_ckpt_key_name(need_combined_weights, item, "mm_projector1.bias", "mm_projector1.original_module.bias", "mm_projector1.modules_to_save.default.bias")
+    #         if "mm_projector1.weight" in fix_item:
+    #             need_combined_weights = replace_ckpt_key_name(need_combined_weights, item, "mm_projector1.weight", "mm_projector1.original_module.weight", "mm_projector1.modules_to_save.default.weight")
+    #         if "model.model.lbm" in fix_item:
+    #             need_combined_weights = replace_ckpt_key_name(need_combined_weights, item, "model.model.lbm", "model.model.lbm.original_module", "model.model.lbm.modules_to_save.default")
+    #         if "out_norm" in fix_item:
+    #             need_combined_weights = replace_ckpt_key_name(need_combined_weights, item, "out_norm", "out_norm.original_module", "out_norm.modules_to_save.default")
+    #         if "asr_transformer_encoder" in fix_item:
+    #             need_combined_weights = replace_ckpt_key_name(need_combined_weights, item, "asr_transformer_encoder", "asr_transformer_encoder.original_module", "asr_transformer_encoder.modules_to_save.default")
+
+    # # print(f"model is : {model}")
+    # # print(f"need_combined_weights is : {need_combined_weights.keys()}")
+    # model.load_state_dict(need_combined_weights, strict=False)
+    # # exit(0)
+    # #######
 
     if training_args.gradient_checkpointing:
         model.enable_input_require_grads()

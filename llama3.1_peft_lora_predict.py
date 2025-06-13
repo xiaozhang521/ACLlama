@@ -28,15 +28,15 @@ CONFIG = BasicSetting()
 
 def get_result(model_inputs, model, tokenizer, audio_feat):
     model.generation_config.pad_token_id = tokenizer.eos_token_id
-    output_ids = model.generate(
-        **model_inputs,
-        audios=audio_feat,
-        max_new_tokens=512,
-        eos_token_id=tokenizer.eos_token_id,
-        # do_sample=False,
-    )
-    # print(f"output_ids is : {output_ids}")
-    # exit(0)
+    with torch.inference_mode():
+        output_ids = model.generate(
+            **model_inputs,
+            audios=audio_feat,
+            max_new_tokens=512,
+            eos_token_id=tokenizer.eos_token_id,
+            # do_sample=False,
+        )
+
     # print(tokenizer.batch_decode(output_ids))
     input_ids = model_inputs["input_ids"]
     input_token_len = input_ids.shape[1]
@@ -70,7 +70,7 @@ def gen_model_inputs(tokenizer, system, prompt, device, audio_placeholder_ids, b
     input_id += assistant_input_id
     input_ids.append(input_id)
     input_ids = torch.tensor(input_ids, dtype=torch.int).to(device)
-    attention_mask = input_ids.ne(tokenizer.pad_token_id)
+    attention_mask = input_ids.ne(tokenizer.pad_token_id).to(device)
     return dict(input_ids=input_ids, attention_mask=attention_mask)
 
 
@@ -81,30 +81,30 @@ def process_items(thread_id, subset, args, CONFIG, return_dict):
     quantization_config = None
     model = ACLlamaForCausalLM.from_pretrained(
         args.base_model_path,
-        device_map=None,
+        device_map=device,
         torch_dtype=torch.float16,
         quantization_config=quantization_config,
     )
-    
-    import glob
-    from safetensors.torch import load_file
-    shard_files = sorted(glob.glob(os.path.join(args.peft_model_id, "adapter_model-*.safetensors")))
-    if not shard_files:
-        shard_files = sorted(glob.glob(os.path.join(args.peft_model_id, "adapter_model.safetensors")))
-    need_combined_weights = {}
-    for shard in shard_files:
-        shard_state = load_file(shard)
-        need_combined_weights.update(shard_state)
-    print(f"need_combined_weights is : {need_combined_weights.keys()}")
-    # new_sd = {}
-    # for k, v in need_combined_weights.items():
-    #     if ".lora_A.weight" in k and ".default" not in k:
-    #         k = k.replace(".lora_A.weight", ".lora_A.default.weight")
-    #     if ".lora_B.weight" in k and ".default" not in k:
-    #         k = k.replace(".lora_B.weight", ".lora_B.default.weight")
-    #     new_sd[k] = v
 
-    # torch.save(new_sd, os.path.join(args.peft_model_id, "adapter_model/patched.bin"))
+    # import glob
+    # from safetensors.torch import load_file
+    # shard_files = sorted(glob.glob(os.path.join(args.peft_model_id, "adapter_model-*.safetensors")))
+    # if not shard_files:
+    #     shard_files = sorted(glob.glob(os.path.join(args.peft_model_id, "adapter_model.safetensors")))
+    # need_combined_weights = {}
+    # for shard in shard_files:
+    #     shard_state = load_file(shard)
+    #     need_combined_weights.update(shard_state)
+    # print(f"need_combined_weights is : {need_combined_weights.keys()}")
+    
+    # # new_sd = {}
+    # # for k, v in need_combined_weights.items():
+    # #     if ".lora_A.weight" in k and ".default" not in k:
+    # #         k = k.replace(".lora_A.weight", ".lora_A.default.weight")
+    # #     if ".lora_B.weight" in k and ".default" not in k:
+    # #         k = k.replace(".lora_B.weight", ".lora_B.default.weight")
+    # #     new_sd[k] = v
+    # # torch.save(new_sd, os.path.join(args.peft_model_id, "adapter_model/patched.bin"))
     
     for module in model.model.audio_tower:
         module.to(device)
@@ -126,6 +126,22 @@ def process_items(thread_id, subset, args, CONFIG, return_dict):
     torch.cuda.empty_cache()
     model.eval()
 
+    combined_weights = torch.load(args.peft_model_id + "/base_model.bin", map_location=device)
+    need_combined_weights = {}
+    for item in combined_weights.keys():
+        fix_item = item
+        # if "lora" not in fix_item:
+        #     fix_item = fix_item.replace("base_model.model.", "")
+        # if ".base_layer.bias" in fix_item:
+        #     fix_item = fix_item.replace(".base_layer.bias", ".bias")
+        # if ".base_layer.weight" in fix_item:
+        #     fix_item = fix_item.replace(".base_layer.weight", ".weight")
+        need_combined_weights[fix_item] = combined_weights[item]
+
+    # for item in need_combined_weights.keys():
+    #     print(f"item is : {item}, {need_combined_weights[item].dtype}")
+    # exit(0)
+    model.load_state_dict(need_combined_weights, strict=True)
 
     DEFAULT_AUDIO_PATCH_TOKEN = "<audio_patch>"
     audio_placeholder = DEFAULT_AUDIO_PATCH_TOKEN * CONFIG.audio_token_len
@@ -152,7 +168,7 @@ def process_items(thread_id, subset, args, CONFIG, return_dict):
     model_inputs = gen_model_inputs(tokenizer, system, prompt, device, audio_placeholder_ids, begin_of_text_id,
                                     start_header_id, end_header_id, eot_id, nl_tokens, _system, _user, _assistant)
 
-    thread_results = {"clean": [], "other": []}
+    thread_results = {"clean": [], "other": [], "train": []}
 
     for idx, i in tqdm(subset, desc=f"Thread-{thread_id} processing"):
         cur_input_audio_file = i["conversations"][0]["audio"]
@@ -161,6 +177,8 @@ def process_items(thread_id, subset, args, CONFIG, return_dict):
             category = "other"
         elif "test-clean" in cur_input_audio_file:
             category = "clean"
+        elif "train" in cur_input_audio_file:
+            category = "train"
         else:
             print(f"Unrecognized audio file: {cur_input_audio_file}")
             raise ValueError("Unrecognized audio file category")
@@ -170,6 +188,8 @@ def process_items(thread_id, subset, args, CONFIG, return_dict):
             audio, sampling_rate=CONFIG.sampling_rate, return_tensors="pt"
         ).input_features
         audio_feat = audio_feat.to(device, dtype=torch.float16)
+        model = model.to(device, dtype=torch.float16)
+        model.eval()
 
         base_model_response = get_result(model_inputs, model, tokenizer, audio_feat)
 

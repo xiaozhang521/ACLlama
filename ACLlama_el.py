@@ -179,29 +179,29 @@ class ACLlamaModel(LlamaModel):
             self.mm_projector1 = nn.Linear(config.adapter_size*2 , config.hidden_size)
             #self.relu = nn.ReLU()
             # self.mm_projector2 = nn.Linear(config.hidden_size , config.hidden_size)
-            # asr_encoder_layer = nn.TransformerEncoderLayer(
-            #     d_model=config.hidden_size,
-            #     nhead=config.num_attention_heads,
-            #     dim_feedforward=config.hidden_size*2,
-            #     dropout=0.1,
-            #     norm_first=True
-            # )
-            self.lbm =  LookBackModule(config)
-            self.out_norm = nn.LayerNorm(config.hidden_size)
-            self.audio_feature_head = nn.Linear(config.hidden_size, config.vocab_size, bias=False)
-            # self.asr_transformer_encoder = nn.TransformerEncoder(asr_encoder_layer, num_layers=1)
-
-        ########
-            self.asr_transformer_encoder = MYEncoderLayer(
+            asr_encoder_layer = nn.TransformerEncoderLayer(
                 d_model=config.hidden_size,
                 nhead=config.num_attention_heads,
                 dim_feedforward=config.hidden_size*2,
                 dropout=0.1,
+                norm_first=True
             )
+            self.lbm =  LookBackModule(config)
+            self.out_norm = nn.LayerNorm(config.hidden_size)
+            self.audio_feature_head = nn.Linear(config.hidden_size, config.vocab_size, bias=False)
+            self.asr_transformer_encoder = nn.TransformerEncoder(asr_encoder_layer, num_layers=1)
 
-        self.text_projector = nn.Sequential(nn.Linear(config.hidden_size , config.hidden_size*2),
-                                            ACT2FN["gelu"],
-                                            nn.Linear(config.hidden_size*2 , config.hidden_size))
+        ########
+            # self.asr_transformer_encoder = MYEncoderLayer(
+            #     d_model=config.hidden_size,
+            #     nhead=config.num_attention_heads,
+            #     dim_feedforward=config.hidden_size*2,
+            #     dropout=0.1,
+            # )
+
+        # self.text_projector = nn.Sequential(nn.Linear(config.hidden_size , config.hidden_size*2),
+        #                                     ACT2FN["gelu"],
+        #                                     nn.Linear(config.hidden_size*2 , config.hidden_size))
 
         self.avg_pooler = nn.AvgPool1d(2, stride=2)
         ########
@@ -227,10 +227,14 @@ class ACLlamaModel(LlamaModel):
             inputs_embeds = self.embed_tokens(input_ids)
 
         ########
-        inputs_embeds = self.text_projector(inputs_embeds)
+        # inputs_embeds = self.text_projector(inputs_embeds)
+        predict_logits = None
+        audio_features_4_loss = None
+        audio_feature_lengths = attention_mask.int().sum(dim=1)  # shape: (batch_size,)
         ########
 
         audio_tower = getattr(self, 'audio_tower', None)
+        
         if audio_tower is not None and (input_ids.shape[1] != 1 or self.training) and audios is not None:
             audio_tower = audio_tower[0]  # HACK: for FSDP
             audio_list=[]
@@ -247,19 +251,18 @@ class ACLlamaModel(LlamaModel):
                 with torch.no_grad():
                     audio=audio.unsqueeze(0)
                     audio_feature = audio_tower.encoder(audio).last_hidden_state
-
-                # print(f"audio_feature i s: {audio_feature.dtype}")
                 
                 audio_feature = audio_feature.view(audio_feature.shape[0], audio_feature.shape[1]//2, 2 * audio_feature.shape[2])
                 audio_feature = self.mm_projector1(audio_feature)
-                # audio_feature = self.asr_transformer_encoder(audio_feature)
+                                
+                audio_feature = self.asr_transformer_encoder(audio_feature)
 
                 # audio_feature_mask = torch.zeros_like(audio_feature).bool()
                 # audio_feature_mask = audio_feature_mask[:, :, 0].squeeze(-1).transpose(0, 1)
                 # audio_feature = self.asr_transformer_encoder(audio_feature, src_key_padding_mask=audio_feature_mask)
 
-                audio_feature = self.asr_transformer_encoder(audio_feature, None, None)[0]
-                
+                # audio_feature = self.asr_transformer_encoder(audio_feature, None, None)[0]
+
                 # print(f"audio_feature after asr_transformer_encoder is : {audio_feature}")
                 
                 audio_feature = self.out_norm(audio_feature)
@@ -268,12 +271,12 @@ class ACLlamaModel(LlamaModel):
             audio_features = torch.stack(audio_list, dim=0)
  
             ######
-            audio_feature_lengths = attention_mask.int().sum(dim=1)  # shape: (batch_size,)
-            
             audio_features_4_loss = audio_features.clone().permute(0, 2, 1)
             while audio_features_4_loss.size(2) // 2 - 1 > audio_feature_lengths.max():
                 audio_features_4_loss = self.avg_pooler(audio_features_4_loss)
             audio_features_4_loss = audio_features_4_loss.permute(0, 2, 1)
+            # print(f"audio_features_4_loss is : {audio_features_4_loss}")
+            # exit(0)
             ######
  
             #audio_features = audio_features.view(audio_features.shape[0], audio_features.shape[1]//2, 2 * audio_features.shape[2])
@@ -365,14 +368,15 @@ class ACLlamaModel(LlamaModel):
         )
 
         if self.training:
-            return_state["audio_features"] =  predict_logits
+            
             return_state["label_shift"] = label_shift
             return_state["label_extend"] = label_extend
 
         #########
+        return_state["audio_features"] =  predict_logits
         return_state["audio_feature_lengths"] = audio_feature_lengths
         return_state["audio_features_4_loss"] = audio_features_4_loss
-        return_state["inputs_embeds"] = inputs_embeds
+        return_state["inputs_embeds_4_loss"] = inputs_embeds
         #########
         
         return return_state 
@@ -421,6 +425,7 @@ class ACLlamaForCausalLM(LlamaForCausalLM):
         asr_targets_neg: Optional[torch.LongTensor] = None,
         ######
     ) -> Union[Tuple, CausalLMOutputWithPast]:
+        
         output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
         output_hidden_states = (
             output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
@@ -444,7 +449,7 @@ class ACLlamaForCausalLM(LlamaForCausalLM):
         #######
         audio_feature_lengths = outputs["audio_feature_lengths"]
         audio_features_4_loss = outputs["audio_features_4_loss"]
-        inputs_embeds = outputs["inputs_embeds"]
+        inputs_embeds_4_loss = outputs["inputs_embeds_4_loss"]
         #######
         
         hidden_states = outputs["last_hidden_state"]
@@ -512,8 +517,6 @@ class ACLlamaForCausalLM(LlamaForCausalLM):
             loss = loss_fct(shift_logits, shift_labels)
             loss = loss + 0.3*loss_asr 
 
-            loss = loss_asr 
-
             # ########
             # def get_contrastive_loss(self, encoder_out1, encoder_out2):
             #     def _sentence_embedding(encoder_out, padding_mask):
@@ -556,8 +559,8 @@ class ACLlamaForCausalLM(LlamaForCausalLM):
             
             # # 长度对齐
             # #########
-            # min_seg_length = min(inputs_embeds.size(1), audio_features_4_loss.size(1))
-            # inputs_embeds_filter = inputs_embeds[:, :min_seg_length, :]
+            # min_seg_length = min(inputs_embeds_4_loss.size(1), audio_features_4_loss.size(1))
+            # inputs_embeds_filter = inputs_embeds_4_loss[:, :min_seg_length, :]
             # audio_features_4_loss = audio_features_4_loss[:, :min_seg_length, :]
             # #########
             
@@ -568,11 +571,11 @@ class ACLlamaForCausalLM(LlamaForCausalLM):
             # # lengths: [B]
             
             # # 创建 mask1: [B, 512]
-            # mask1 = torch.arange(inputs_embeds.size(1), device=inputs_embeds.device)[None, :] < audio_feature_lengths[:, None]
+            # mask1 = torch.arange(inputs_embeds_4_loss.size(1), device=inputs_embeds_4_loss.device)[None, :] < audio_feature_lengths[:, None]
             # mask1 = mask1.unsqueeze(-1)  # [B, 512, 1]
 
             # # masked mean
-            # masked_sum1 = (inputs_embeds * mask1).sum(dim=1)  # [B, 3072]
+            # masked_sum1 = (inputs_embeds_4_loss * mask1).sum(dim=1)  # [B, 3072]
             # masked_mean1 = masked_sum1 / audio_feature_lengths.unsqueeze(1)     # [B, 3072]
 
             # # 直接对 encoder_embedding2 做 mean
@@ -596,7 +599,7 @@ class ACLlamaForCausalLM(LlamaForCausalLM):
             # # # clip
             # # ##########
             # # # 这里应该加两个特殊token，text和audio的cls token，用来提取全局信息，暂时为了简便，直接取mean
-            # # inputs_embeds_filter = inputs_embeds[:, :audio_features_4_loss.size(1), :]
+            # # inputs_embeds_filter = inputs_embeds_4_loss[:, :audio_features_4_loss.size(1), :]
             # # mask1 = torch.arange(inputs_embeds_filter.size(1), device=inputs_embeds_filter.device)[None, :] < audio_feature_lengths[:, None]
             # # mask1 = mask1.unsqueeze(-1)  # [B, 512, 1]
 
@@ -636,10 +639,10 @@ class ACLlamaForCausalLM(LlamaForCausalLM):
             # # loss = (loss_i + loss_t)/2
             # # ##########
 
-        return CausalLMOutputWithPast(
-           loss=loss,
-           logits=outputs["audio_features"],
-        )
+        # return CausalLMOutputWithPast(
+        #    loss=loss,
+        #    logits=outputs["audio_features"],
+        # )
 
         if not return_dict:
             output = (logits,) + outputs[1:]
@@ -695,9 +698,6 @@ class ACLlamaForCausalLM(LlamaForCausalLM):
                 "attention_mask": attention_mask,
             }
         )
-        
-        print(kwargs.keys())
-        exit(0)
         
         model_inputs.update({"audios": kwargs["audios"]} if "audios" in kwargs.keys() else {})
         
