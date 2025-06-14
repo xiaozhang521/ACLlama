@@ -24,6 +24,10 @@ from transformers import BitsAndBytesConfig
 # from ACLlama_el import ACLlamaForCausalLM
 from ACLlama_el_encoder import ACLlamaForCausalLM
 
+########
+import torch.nn as nn
+########
+
 IGNORE_TOKEN_ID = LabelSmoother.ignore_index
 
 
@@ -422,6 +426,15 @@ def train():
         elif isinstance(m, torch.nn.LayerNorm):
             torch.nn.init.ones_(m.weight)
             torch.nn.init.zeros_(m.bias)
+    def text_init_weights(module, std=0.02):
+        if isinstance(module, nn.Linear):
+            module.weight.data.normal_(mean=0.0, std=std)
+            if module.bias is not None:
+                module.bias.data.zero_()
+        elif isinstance(module, nn.Embedding):
+            module.weight.data.normal_(mean=0.0, std=std)
+            if module.padding_idx is not None:
+                module.weight.data[module.padding_idx].zero_()
             
     model.get_model().asr_transformer_encoder.apply(init_weights)
     # model.get_model().text_projector.apply(init_weights)

@@ -71,7 +71,7 @@ class TrainingArguments(transformers.TrainingArguments):
         },
     )
     use_lora: bool = False
-    dataloader_num_workers: int = 4
+    dataloader_num_workers: int = 8
 
 
 @dataclass
@@ -329,16 +329,16 @@ class AudioDataCollator:
     def __call__(self, batch: Dict[str, Union[List[int], torch.Tensor]]):
         
         batch_samples, index = zip(*batch)
-        # batch_size = len(batch)
-        # used_indices = set(index)
+        batch_size = len(batch)
+        used_indices = set(index)
 
-        # # 采样负样本索引，确保与当前 batch 不重复
-        # dataset_size = len(self.dataset)
+        # 采样负样本索引，确保与当前 batch 不重复
+        dataset_size = len(self.dataset)
         
-        # # 剔除已用 index，随机采样负样本 index
-        # available_indices = list(set(range(dataset_size)) - used_indices)
-        # neg_indices = random.sample(available_indices, k=batch_size)
-        # neg_batch = [self.dataset[i][0] for i in neg_indices]
+        # 剔除已用 index，随机采样负样本 index
+        available_indices = list(set(range(dataset_size)) - used_indices)
+        neg_indices = random.sample(available_indices, k=batch_size * 7)
+        neg_batch = [self.dataset[i][0] for i in neg_indices]
 
         def stack_or_list(key):
             if isinstance(batch_samples[0][key], torch.Tensor):
@@ -346,33 +346,33 @@ class AudioDataCollator:
             else:
                 return [item[key] for item in batch_samples]
 
-        # def neg_stack_or_list(key):
-        #     if isinstance(neg_batch[0][key], torch.Tensor):
-        #         return torch.stack([item[key] for item in batch_samples])
-        #     else:
-        #         return [item[key] for item in batch_samples]
+        def neg_stack_or_list(key):
+            if isinstance(neg_batch[0][key], torch.Tensor):
+                return torch.stack([item[key] for item in batch_samples])
+            else:
+                return [item[key] for item in batch_samples]
 
-        # # return {
-        # #     "input_ids": stack_or_list("input_ids"),
-        # #     "labels": stack_or_list("labels"),
-        # #     "attention_mask": stack_or_list("attention_mask"),
-        # #     "audios": stack_or_list("audios"),
-        # #     "asr_targets": stack_or_list("asr_targets") if batch_samples[0]["asr_targets"] is not None else None,
-        # #     "input_ids_neg": neg_stack_or_list("input_ids"),
-        # #     "labels_neg": neg_stack_or_list("labels"),
-        # #     "attention_mask_neg": neg_stack_or_list("attention_mask"),
-        # #     "audios_neg": neg_stack_or_list("audios"),
-        # #     "asr_targets_neg": neg_stack_or_list("asr_targets") if batch_samples[0]["asr_targets"] is not None else None,
-        # # }
+        # return {
+        #     "input_ids": stack_or_list("input_ids"),
+        #     "labels": stack_or_list("labels"),
+        #     "attention_mask": stack_or_list("attention_mask"),
+        #     "audios": stack_or_list("audios"),
+        #     "asr_targets": stack_or_list("asr_targets") if batch_samples[0]["asr_targets"] is not None else None,
+        #     "input_ids_neg": neg_stack_or_list("input_ids"),
+        #     "labels_neg": neg_stack_or_list("labels"),
+        #     "attention_mask_neg": neg_stack_or_list("attention_mask"),
+        #     "audios_neg": neg_stack_or_list("audios"),
+        #     "asr_targets_neg": neg_stack_or_list("asr_targets") if batch_samples[0]["asr_targets"] is not None else None,
+        # }
         return {
             "input_ids": stack_or_list("input_ids"),
             "labels": stack_or_list("labels"),
             "attention_mask": stack_or_list("attention_mask"),
             "audios": stack_or_list("audios"),
             "asr_targets": stack_or_list("asr_targets") if batch_samples[0]["asr_targets"] is not None else None,
-            "input_ids_neg": None,
+            "input_ids_neg": neg_stack_or_list("input_ids"),
             "labels_neg": None,
-            "attention_mask_neg": None,
+            "attention_mask_neg": neg_stack_or_list("attention_mask"),
             "audios_neg": None,
             "asr_targets_neg": None,
         }

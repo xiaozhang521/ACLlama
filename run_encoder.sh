@@ -18,7 +18,8 @@ export TORCH_DISTRIBUTED_DEBUG=DETAIL
 # output_tag="../ACLlama_output/ACLlama_lora_finetune_add_contrastive_loss_v1"
 # output_tag="../ACLlama_output/ACLlama_lora_finetune_add_clip_contrastive_loss"
 # output_tag="../ACLlama_output/ACLlama_lora_finetune_add_clip_contrastive_loss_audio_caption_300epoch"
-output_tag="../ACLlama_output/ACLlama_lora_finetune_add_clip_contrastive_loss_audio_caption_300epoch_large_batch_audio_encoder"
+# output_tag="../ACLlama_output/ACLlama_lora_finetune_add_clip_contrastive_loss_audio_caption_300epoch_large_batch_audio_encoder"
+output_tag="../ACLlama_output/ACLlama_lora_finetune_add_clip_contrastive_loss_audio_caption_300epoch_large_batch_audio_encoder_text_proj"
 
 export CUDA_VISIBLE_DEVICES=${device[@]}
 cmd="torchrun
