@@ -634,7 +634,8 @@ def train():
     data_module = make_supervised_data_module(
         tokenizer=tokenizer, data_args=data_args, training_args=training_args, max_len=training_args.model_max_length, audio_processor_path=model_args.audio_model_name_or_path
     )
-    audio_config = model.get_model().audio_tower[0].config
+    # audio_config = model.get_model().audio_tower[0].config
+    audio_config = model.get_model().audio_tower.config
     audio_config.audio_patch_token = tokenizer.get_vocab()["<audio_patch>"]
     audio_config.llm_pad_token_id = tokenizer.pad_token_id
     audio_config.audio_patch_size = CONFIG.audio_token_len
@@ -693,40 +694,68 @@ def train():
     # #######
     # import glob
     # from safetensors.torch import load_file
-    # pretrained_encoder_model_path = "/data/s50042884/my_code/audio_pretrain/ACLlama_output/ACLlama_lora_finetune_add_clip_contrastive_loss_audio_caption_300epoch/checkpoint-5600/"
-    # shard_files = sorted(glob.glob(os.path.join(pretrained_encoder_model_path, "adapter_model-*.safetensors")))
+    
+    # # pretrained_encoder_model_path = "/data/s50042884/my_code/audio_pretrain/ACLlama_output/ACLlama_lora_finetune_add_clip_contrastive_loss_audio_caption_300epoch/checkpoint-5600/"
+    # # shard_files = sorted(glob.glob(os.path.join(pretrained_encoder_model_path, "adapter_model-*.safetensors")))
+    # # if not shard_files:
+    # #     shard_files = sorted(glob.glob(os.path.join(pretrained_encoder_model_path, "adapter_model.safetensors")))
+    # # need_combined_weights = {}
+    # # for shard in shard_files:
+    # #     shard_state = load_file(shard)
+    # #     for item in shard_state.keys():
+    # #         if "base_model.model.model.layers." in item:
+    # #             continue
+            
+    # #         def replace_ckpt_key_name(need_combined_weights, key_item, ckpt_name, ori_replaced_name, save_replaced_name):
+    # #             replaced_item = key_item.replace(ckpt_name, ori_replaced_name)
+    # #             need_combined_weights[replaced_item] = shard_state[key_item]
+    # #             replaced_item = key_item.replace(ckpt_name, save_replaced_name)
+    # #             need_combined_weights[replaced_item] = shard_state[key_item]
+    # #             return need_combined_weights
+            
+    # #         fix_item = item
+    # #         if "mm_projector1.bias" in item:
+    # #             need_combined_weights = replace_ckpt_key_name(need_combined_weights, item, "mm_projector1.bias", "mm_projector1.original_module.bias", "mm_projector1.modules_to_save.default.bias")
+    # #         if "mm_projector1.weight" in fix_item:
+    # #             need_combined_weights = replace_ckpt_key_name(need_combined_weights, item, "mm_projector1.weight", "mm_projector1.original_module.weight", "mm_projector1.modules_to_save.default.weight")
+    # #         if "model.model.lbm" in fix_item:
+    # #             need_combined_weights = replace_ckpt_key_name(need_combined_weights, item, "model.model.lbm", "model.model.lbm.original_module", "model.model.lbm.modules_to_save.default")
+    # #         if "out_norm" in fix_item:
+    # #             need_combined_weights = replace_ckpt_key_name(need_combined_weights, item, "out_norm", "out_norm.original_module", "out_norm.modules_to_save.default")
+    # #         if "asr_transformer_encoder" in fix_item:
+    # #             need_combined_weights = replace_ckpt_key_name(need_combined_weights, item, "asr_transformer_encoder", "asr_transformer_encoder.original_module", "asr_transformer_encoder.modules_to_save.default")
+
+    # pretrained_encoder_model_path = "/data/s50042884/my_code/audio_pretrain/ACLlama_output/ACLlama_lora_finetune_add_clip_contrastive_loss_audio_caption_300epoch_large_batch_audio_encoder/checkpoint-2800/"
+    # shard_files = sorted(glob.glob(os.path.join(pretrained_encoder_model_path, "model-*.safetensors")))
     # if not shard_files:
-    #     shard_files = sorted(glob.glob(os.path.join(pretrained_encoder_model_path, "adapter_model.safetensors")))
+    #     shard_files = sorted(glob.glob(os.path.join(pretrained_encoder_model_path, "model.safetensors")))
     # need_combined_weights = {}
     # for shard in shard_files:
     #     shard_state = load_file(shard)
     #     for item in shard_state.keys():
-    #         if "base_model.model.model.layers." in item:
-    #             continue
-            
-    #         def replace_ckpt_key_name(need_combined_weights, key_item, ckpt_name, ori_replaced_name, save_replaced_name):
-    #             replaced_item = key_item.replace(ckpt_name, ori_replaced_name)
-    #             need_combined_weights[replaced_item] = shard_state[key_item]
-    #             replaced_item = key_item.replace(ckpt_name, save_replaced_name)
-    #             need_combined_weights[replaced_item] = shard_state[key_item]
-    #             return need_combined_weights
-            
-    #         fix_item = item
-    #         if "mm_projector1.bias" in item:
-    #             need_combined_weights = replace_ckpt_key_name(need_combined_weights, item, "mm_projector1.bias", "mm_projector1.original_module.bias", "mm_projector1.modules_to_save.default.bias")
-    #         if "mm_projector1.weight" in fix_item:
-    #             need_combined_weights = replace_ckpt_key_name(need_combined_weights, item, "mm_projector1.weight", "mm_projector1.original_module.weight", "mm_projector1.modules_to_save.default.weight")
-    #         if "model.model.lbm" in fix_item:
-    #             need_combined_weights = replace_ckpt_key_name(need_combined_weights, item, "model.model.lbm", "model.model.lbm.original_module", "model.model.lbm.modules_to_save.default")
-    #         if "out_norm" in fix_item:
-    #             need_combined_weights = replace_ckpt_key_name(need_combined_weights, item, "out_norm", "out_norm.original_module", "out_norm.modules_to_save.default")
-    #         if "asr_transformer_encoder" in fix_item:
-    #             need_combined_weights = replace_ckpt_key_name(need_combined_weights, item, "asr_transformer_encoder", "asr_transformer_encoder.original_module", "asr_transformer_encoder.modules_to_save.default")
+    #         # need_combined_weights[item] = shard_state[item]
+    #         if "audio_tower" in item and "encoder" in item:
+    #             replaced_item = item.replace("model.", "base_model.model.model.")
+    #             if "self_attn" in item:
+    #                 if "q_proj" in item:
+    #                     replaced_item = replaced_item.replace("q_proj.", "q_proj.base_layer.")
+    #                 if "k_proj" in item:
+    #                     replaced_item = replaced_item.replace("k_proj.", "k_proj.base_layer.")
+    #                 if "v_proj" in item:
+    #                     replaced_item = replaced_item.replace("v_proj.", "v_proj.base_layer.")
+    #                 if "o_proj" in item:
+    #                     replaced_item = replaced_item.replace("o_proj.", "o_proj.base_layer.")
+    #             need_combined_weights[replaced_item] = shard_state[item]
+
 
     # # print(f"model is : {model}")
     # # print(f"need_combined_weights is : {need_combined_weights.keys()}")
     # model.load_state_dict(need_combined_weights, strict=False)
     # # exit(0)
+    
+    # for name, param in model.named_parameters():
+    #     if 'audio_tower' in name:
+    #         param.requires_grad = False
     # #######
 
     if training_args.gradient_checkpointing:
@@ -762,6 +791,7 @@ def train():
     #training_args.restore_callback_states_from_checkpoint=True
     # show updated parameters
     print(count_parameters(model))
+    # exit(0)
     
     #######
     audio_data_collator = AudioDataCollator(tokenizer, dataset=data_module["train_dataset"])
@@ -780,7 +810,7 @@ def train():
     )
 
     with torch.autocast("cuda"):
-        #trainer.train(resume_from_checkpoint="/wangbenyou/zhangyuhao/llms/ACLlama_e2/output/ACLlama_lora_libri_ctc_new_data/checkpoint-1700/")
+        # trainer.train(resume_from_checkpoint="/data/s50042884/my_code/audio_pretrain/ACLlama_output/ACLlama_load_pretrained_encoder_only_adapter-align/checkpoint-2100/")
         trainer.train()
     trainer.save_state()
 

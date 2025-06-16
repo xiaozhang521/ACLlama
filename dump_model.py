@@ -474,7 +474,8 @@ def train():
     data_module = make_supervised_data_module(
         tokenizer=tokenizer, data_args=data_args, max_len=training_args.model_max_length, audio_processor_path=model_args.audio_model_name_or_path
     )
-    audio_config = model.get_model().audio_tower[0].config
+    # audio_config = model.get_model().audio_tower[0].config
+    audio_config = model.get_model().audio_tower.config
     #audio_config.audio_patch_token = tokenizer.convert_tokens_to_ids([DEFAULT_AUDIO_PATCH_TOKEN])[0]
     #audio_config.audio_start_token, audio_config.audio_end_token = tokenizer.convert_tokens_to_ids([DEFAULT_AUDIO_START_TOKEN, DEFAULT_AUDIO_END_TOKEN])
     audio_config.audio_patch_token = tokenizer.get_vocab()["<audio_patch>"]
