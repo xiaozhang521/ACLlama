@@ -71,7 +71,7 @@ class TrainingArguments(transformers.TrainingArguments):
         },
     )
     use_lora: bool = False
-    dataloader_num_workers: int = 8
+    dataloader_num_workers: int = 12
 
 
 @dataclass
@@ -306,7 +306,20 @@ class SupervisedDataset(Dataset):
     def __len__(self):
         return len(self.input_ids)
 
-    def __getitem__(self, i) -> Dict[str, torch.Tensor]:
+    # def __getitem__(self, i) -> Dict[str, torch.Tensor]:
+    #     audio, _ = librosa.load(self.audio_paths[i], sr=CONFIG.sampling_rate)
+    #     audio_feat = self.audio_processor(audio, sampling_rate=CONFIG.sampling_rate, return_tensors="pt").input_features
+    #     audio_feat = audio_feat.squeeze(0).to(CONFIG.device, dtype=torch.bfloat16)
+    #     tmp_input_ids = torch.tensor(self.input_ids[i],dtype=torch.int)
+    #     return dict(
+    #         input_ids=self.input_ids[i],
+    #         labels=self.labels[i],
+    #         attention_mask=self.attention_mask[i],
+    #         audios=audio_feat,
+    #         asr_targets=self.asr_targets[i],
+    #     ), i
+
+    def _process_item(self, i):
         audio, _ = librosa.load(self.audio_paths[i], sr=CONFIG.sampling_rate)
         audio_feat = self.audio_processor(audio, sampling_rate=CONFIG.sampling_rate, return_tensors="pt").input_features
         audio_feat = audio_feat.squeeze(0).to(CONFIG.device, dtype=torch.bfloat16)
@@ -317,66 +330,121 @@ class SupervisedDataset(Dataset):
             attention_mask=self.attention_mask[i],
             audios=audio_feat,
             asr_targets=self.asr_targets[i],
-        ), i
+        )
+
+    def __getitem__(self, index):
+        pos_sample = self._process_item(index)
+
+        # 负样本采样（不包含 index 本身）
+        all_indices = list(range(len(self.raw_data)))
+        all_indices.remove(index)
+        neg_indices = random.sample(all_indices, k=self.num_negatives)
+        neg_samples = [self._process_item(i) for i in neg_indices]
+
+        # print(f"pos_sample is : {pos_sample}")
+        # print(f"neg_samples is : {len(neg_samples)}")
+        # exit(0)
+
+        # 分别提取字段
+        pos_sample["neg_input_ids"] = [item["input_ids"] for item in neg_samples]
+        pos_sample["neg_attention_mask"] = [item["attention_mask"] for item in neg_samples]
+        pos_sample["neg_audios"] = [item["audios"] for item in neg_samples]
+        # 其他字段可以按需添加，如 ASR 或 labels
+        return pos_sample
 
 
 #######
+# class AudioDataCollator:
+#     def __init__(self, tokenizer, dataset=None):
+#         self.tokenizer = tokenizer
+#         self.dataset = dataset  # 传入 Dataset 本体以便采样负样本
+
+#     def __call__(self, batch: Dict[str, Union[List[int], torch.Tensor]]):
+        
+#         batch_samples, index = zip(*batch)
+#         batch_size = len(batch)
+#         used_indices = set(index)
+
+#         # 采样负样本索引，确保与当前 batch 不重复
+#         dataset_size = len(self.dataset)
+        
+#         # 剔除已用 index，随机采样负样本 index
+#         available_indices = list(set(range(dataset_size)) - used_indices)
+#         neg_indices = random.sample(available_indices, k=batch_size * 7)
+#         neg_batch = [self.dataset[i][0] for i in neg_indices]
+
+#         def stack_or_list(key):
+#             if isinstance(batch_samples[0][key], torch.Tensor):
+#                 return torch.stack([item[key] for item in batch_samples])
+#             else:
+#                 return [item[key] for item in batch_samples]
+
+#         def neg_stack_or_list(key):
+#             if isinstance(neg_batch[0][key], torch.Tensor):
+#                 return torch.stack([item[key] for item in batch_samples])
+#             else:
+#                 return [item[key] for item in batch_samples]
+
+#         # return {
+#         #     "input_ids": stack_or_list("input_ids"),
+#         #     "labels": stack_or_list("labels"),
+#         #     "attention_mask": stack_or_list("attention_mask"),
+#         #     "audios": stack_or_list("audios"),
+#         #     "asr_targets": stack_or_list("asr_targets") if batch_samples[0]["asr_targets"] is not None else None,
+#         #     "input_ids_neg": neg_stack_or_list("input_ids"),
+#         #     "labels_neg": neg_stack_or_list("labels"),
+#         #     "attention_mask_neg": neg_stack_or_list("attention_mask"),
+#         #     "audios_neg": neg_stack_or_list("audios"),
+#         #     "asr_targets_neg": neg_stack_or_list("asr_targets") if batch_samples[0]["asr_targets"] is not None else None,
+#         # }
+#         return {
+#             "input_ids": stack_or_list("input_ids"),
+#             "labels": stack_or_list("labels"),
+#             "attention_mask": stack_or_list("attention_mask"),
+#             "audios": stack_or_list("audios"),
+#             "asr_targets": stack_or_list("asr_targets") if batch_samples[0]["asr_targets"] is not None else None,
+#             "input_ids_neg": neg_stack_or_list("input_ids").to(batch_samples[0]["input_ids"].device),
+#             "labels_neg": None,
+#             "attention_mask_neg": neg_stack_or_list("attention_mask").to(batch_samples[0]["attention_mask"].device),
+#             "audios_neg": None,
+#             "asr_targets_neg": None,
+#         }
+
+
 class AudioDataCollator:
     def __init__(self, tokenizer, dataset=None):
         self.tokenizer = tokenizer
         self.dataset = dataset  # 传入 Dataset 本体以便采样负样本
 
-    def __call__(self, batch: Dict[str, Union[List[int], torch.Tensor]]):
+    def __call__(self, batch):
         
-        batch_samples, index = zip(*batch)
-        batch_size = len(batch)
-        used_indices = set(index)
-
-        # 采样负样本索引，确保与当前 batch 不重复
-        dataset_size = len(self.dataset)
+        batch, neg_batch = zip(*batch)
         
-        # 剔除已用 index，随机采样负样本 index
-        available_indices = list(set(range(dataset_size)) - used_indices)
-        neg_indices = random.sample(available_indices, k=batch_size * 7)
-        neg_batch = [self.dataset[i][0] for i in neg_indices]
-
-        def stack_or_list(key):
-            if isinstance(batch_samples[0][key], torch.Tensor):
-                return torch.stack([item[key] for item in batch_samples])
+        def stack_list_or_tensor(key):
+            first = batch[0][key]
+            if isinstance(first, torch.Tensor):
+                return torch.stack([item[key] for item in batch])
             else:
-                return [item[key] for item in batch_samples]
+                return [item[key] for item in batch]
 
-        def neg_stack_or_list(key):
-            if isinstance(neg_batch[0][key], torch.Tensor):
-                return torch.stack([item[key] for item in batch_samples])
+        
+        def stack_neg_list_or_tensor(key):
+            first = neg_batch[0][key]
+            if isinstance(first, torch.Tensor):
+                return torch.cat([item[key] for item in neg_batch], dim=0)
             else:
-                return [item[key] for item in batch_samples]
+                return [item[key] for item in neg_batch]
 
-        # return {
-        #     "input_ids": stack_or_list("input_ids"),
-        #     "labels": stack_or_list("labels"),
-        #     "attention_mask": stack_or_list("attention_mask"),
-        #     "audios": stack_or_list("audios"),
-        #     "asr_targets": stack_or_list("asr_targets") if batch_samples[0]["asr_targets"] is not None else None,
-        #     "input_ids_neg": neg_stack_or_list("input_ids"),
-        #     "labels_neg": neg_stack_or_list("labels"),
-        #     "attention_mask_neg": neg_stack_or_list("attention_mask"),
-        #     "audios_neg": neg_stack_or_list("audios"),
-        #     "asr_targets_neg": neg_stack_or_list("asr_targets") if batch_samples[0]["asr_targets"] is not None else None,
-        # }
         return {
-            "input_ids": stack_or_list("input_ids"),
-            "labels": stack_or_list("labels"),
-            "attention_mask": stack_or_list("attention_mask"),
-            "audios": stack_or_list("audios"),
-            "asr_targets": stack_or_list("asr_targets") if batch_samples[0]["asr_targets"] is not None else None,
-            "input_ids_neg": neg_stack_or_list("input_ids"),
-            "labels_neg": None,
-            "attention_mask_neg": neg_stack_or_list("attention_mask"),
-            "audios_neg": None,
-            "asr_targets_neg": None,
+            "input_ids": stack_list_or_tensor("input_ids"),
+            "labels": stack_list_or_tensor("labels"),
+            "attention_mask": stack_list_or_tensor("attention_mask"),
+            "audios": stack_list_or_tensor("audios"),
+            "asr_targets": stack_list_or_tensor("asr_targets") if batch[0]["asr_targets"] is not None else None,
+            "input_ids_neg": stack_neg_list_or_tensor("neg_input_ids"),
+            "attention_mask_neg": stack_neg_list_or_tensor("neg_attention_mask"),
+            "audios_neg": stack_neg_list_or_tensor("neg_audios"),
         }
-
 #######
 
 class LazySupervisedDataset(Dataset):
@@ -394,13 +462,41 @@ class LazySupervisedDataset(Dataset):
         self.audio_processor = WhisperProcessor.from_pretrained(audio_processor_path)
         
         self.training_args = training_args
-
+        self.num_negatives = 7
+      
     def __len__(self):
         return len(self.raw_data)
 
-    def __getitem__(self, i) -> Dict[str, torch.Tensor]:
+    # def __getitem__(self, i) -> Dict[str, torch.Tensor]:
 
-        ret = preprocess([self.raw_data[i]["conversations"]], self.tokenizer, self.max_len)
+    #     ret = preprocess([self.raw_data[i]["conversations"]], self.tokenizer, self.max_len)
+    #     audio_path = ret["audio_paths"][0]
+    #     audio, _ = librosa.load(audio_path, sr=CONFIG.sampling_rate)
+    #     audio_feat = self.audio_processor(audio, sampling_rate=CONFIG.sampling_rate, return_tensors="pt").input_features
+    #     audio_feat = audio_feat.squeeze(0).to(torch.bfloat16)
+
+    #     if len(ret["asr_targets"])>0:
+    #         ret = dict(
+    #             input_ids=ret["input_ids"][0],
+    #             labels=ret["labels"][0],
+    #             attention_mask=ret["attention_mask"][0],
+    #             audios=audio_feat,
+    #             asr_targets=ret["asr_targets"][0],
+    #         )
+    #     else:
+    #         ret = dict(
+    #             input_ids=ret["input_ids"][0],
+    #             labels=ret["labels"][0],
+    #             attention_mask=ret["attention_mask"][0],
+    #             audios=audio_feat,
+    #         )
+
+    #     return ret, i
+
+    def _process_item(self, index):
+        
+        example = self.raw_data[index]
+        ret = preprocess([example["conversations"]], self.tokenizer, self.max_len)
         audio_path = ret["audio_paths"][0]
         audio, _ = librosa.load(audio_path, sr=CONFIG.sampling_rate)
         audio_feat = self.audio_processor(audio, sampling_rate=CONFIG.sampling_rate, return_tensors="pt").input_features
@@ -421,8 +517,30 @@ class LazySupervisedDataset(Dataset):
                 attention_mask=ret["attention_mask"][0],
                 audios=audio_feat,
             )
+            
+        return ret
 
-        return ret, i
+    def __getitem__(self, index):
+        pos_sample = self._process_item(index)
+
+        # 负样本采样（不包含 index 本身）
+        all_indices = list(range(len(self.raw_data)))
+        all_indices.remove(index)
+        neg_indices = random.sample(all_indices, k=self.num_negatives)
+        neg_samples = [self._process_item(i) for i in neg_indices]
+
+        # print(f"pos_sample is : {pos_sample}")
+        # print(f"neg_samples is : {len(neg_samples)}")
+        # exit(0)
+
+        # 分别提取字段
+        neg_samples_return = {}
+        neg_samples_return["neg_input_ids"] = torch.stack([item["input_ids"] for item in neg_samples])
+        neg_samples_return["neg_attention_mask"] = torch.stack([item["attention_mask"] for item in neg_samples])
+        neg_samples_return["neg_audios"] = torch.stack([item["audios"] for item in neg_samples])
+        
+        # 其他字段可以按需添加，如 ASR 或 labels
+        return pos_sample, neg_samples_return
 
 
 def make_supervised_data_module(
@@ -498,6 +616,19 @@ def count_parameters(model):
 
 def train():
     global local_rank
+
+    # import glob
+    # from safetensors.torch import load_file
+    # combined_weights = torch.load("/data/s50042884/my_code/ACLlama_output/ACLlama_lora_finetune_add_clip_contrastive_loss_audio_caption_300epoch_large_batch_audio_encoder_text_proj/checkpoint-2/base_model.bin")
+    # print(f"combined_weights is : {combined_weights.keys()}")
+    
+    # shard_files = sorted(glob.glob(os.path.join("/data/s50042884/my_code/ACLlama_output/ACLlama_lora_finetune_add_clip_contrastive_loss_audio_caption_300epoch_large_batch_audio_encoder_text_proj/checkpoint-2", "model-*.safetensors")))
+    # need_combined_weights = {}
+    # for shard in shard_files:
+    #     shard_state = load_file(shard)
+    #     need_combined_weights.update(shard_state)
+    # print(f"need_combined_weights is : {need_combined_weights.keys()}")
+    # exit(0)
 
     parser = transformers.HfArgumentParser(
         (ModelArguments, DataArguments, TrainingArguments, LoraArguments)
@@ -695,7 +826,7 @@ def train():
         #model=model, tokenizer=tokenizer, args=training_args, callbacks=call_back_list, **data_module
         # model=model, tokenizer=tokenizer, args=training_args, **data_module
         #####
-        model=model, tokenizer=tokenizer, args=training_args, data_collator=audio_data_collator, **data_module
+        model=model, tokenizer=tokenizer, args=training_args, callbacks=call_back_list, data_collator=audio_data_collator, **data_module
         #####
     )
 
