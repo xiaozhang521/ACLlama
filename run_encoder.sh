@@ -19,7 +19,8 @@ export TORCH_DISTRIBUTED_DEBUG=DETAIL
 # output_tag="../ACLlama_output/ACLlama_lora_finetune_add_clip_contrastive_loss"
 # output_tag="../ACLlama_output/ACLlama_lora_finetune_add_clip_contrastive_loss_audio_caption_300epoch"
 # output_tag="../ACLlama_output/ACLlama_lora_finetune_add_clip_contrastive_loss_audio_caption_300epoch_large_batch_audio_encoder"
-output_tag="../ACLlama_output/ACLlama_lora_finetune_add_clip_contrastive_loss_audio_caption_300epoch_large_batch_audio_encoder_text_proj"
+# output_tag="../ACLlama_output/ACLlama_lora_finetune_add_clip_contrastive_loss_audio_caption_300epoch_large_batch_audio_encoder_text_proj"
+output_tag="../ACLlama_output/ACLlama_encoder_finetune_contrastive_loss_audio_caption_large_batch_after_stage1"
 
 export CUDA_VISIBLE_DEVICES=${device[@]}
 cmd="torchrun
@@ -30,13 +31,13 @@ cmd="torchrun
     --master_port 6601
     finetune_acllama_encoder.py
     --audio_model_name_or_path "/data/s50042884/huggingface_model/whisper-large-v3"
-    --text_model_name_or_path "../ACLlama_output/ACLlama_encoder"
-    --data_path "/data/s50042884/my_code/data/audio_caps_formatted.json"
+    --text_model_name_or_path "../ACLlama_output/ACLlama_encoder_dump"
+    --data_path "/data/s50042884/my_code/audio_pretrain/data/libri_train_update.json"
     --output_dir ${output_tag}
     --num_train_epochs 500
-    --per_device_train_batch_size 32
+    --per_device_train_batch_size 8
     --per_device_eval_batch_size 1
-    --gradient_accumulation_steps 8
+    --gradient_accumulation_steps 32
     --evaluation_strategy "no"
     --save_strategy "steps"
     --save_steps 400

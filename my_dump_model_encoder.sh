@@ -43,7 +43,7 @@ python3 dump_model_encoder.py \
 --text_model_name_or_path "/data/s50042884/huggingface_model/Llama-3.2-3B" \
 --data_path "/data/s50042884/huggingface_model/libri_train_update.json" \
 --bf16 True \
---output_dir "../ACLlama_output/ACLlama_encoder" \
+--output_dir "../ACLlama_output/ACLlama_encoder_dump" \
 --num_train_epochs 20 \
 --per_device_train_batch_size 2 \
 --per_device_eval_batch_size 1 \

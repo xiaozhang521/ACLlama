@@ -274,7 +274,7 @@ def preprocess(
     targets = torch.tensor(targets, dtype=torch.int)
     if len(asr_targets) > 0:
         asr_targets = torch.tensor(asr_targets, dtype=torch.int)
-    #print("Finish process data, total:",len(input_ids))
+    #print("Finish process data, total:",len(input_ids))    
     return dict(
         input_ids=input_ids,
         labels=targets,
@@ -774,6 +774,29 @@ def train():
         # Print peft trainable params
         model.print_trainable_parameters()
 
+    #######-load stage1 model
+    pretrained_model_path = "/data/s50042884/my_code/audio_pretrain/ACLlama_zhang/ACLlama_output/ACLlama_encoder_stage1/checkpoint-4110"
+    combined_weights = torch.load(pretrained_model_path + "/base_model.bin", map_location=f"cuda")
+
+    need_combined_weights = {}
+    for item in combined_weights.keys():
+        fix_item = item
+        if "base_model.model.model.layers." in fix_item:
+            continue
+        # if "modules_to_save." in fix_item:
+        #     continue
+        if "original_module." in fix_item:
+            continue
+        
+        fix_item = fix_item.replace("base_model.model.model.", "model.")
+        fix_item = fix_item.replace("base_model.model.", "")
+        # fix_item = fix_item.replace("original_module.", "")
+        fix_item = fix_item.replace("modules_to_save.default.", "")
+
+        need_combined_weights[fix_item] = combined_weights[item]
+        
+    model.load_state_dict(need_combined_weights, strict=False)
+    
     for name, param in model.named_parameters():
         if "audio_tower" in name and "decoder" in name:
             param.requires_grad = False
@@ -781,6 +804,7 @@ def train():
         #     param.requires_grad = False
     #     print(f"name is : {name} param is : {param.device}, {param.dtype}")
     # exit(0)
+    #######
 
     if training_args.gradient_checkpointing:
         model.enable_input_require_grads()
