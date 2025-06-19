@@ -21,8 +21,8 @@ export ASCEND_DEVICE_ID=${device[@]}
 cmd="python llama3.1_peft_lora_predict_npu.py
     --eval_data "/data/s50042884/huggingface_model/libri_test.json"
     --audio_tower "/data/s50042884/huggingface_model/whisper-large-v3"
-    --base_model_path ${output_model_root}"/ACLlama_lora/"
-    --peft_model_id ${output_model_path}"/checkpoint-2/"
+    --base_model_path ${output_model_root}"/ACLlama_finetune_whisper/"
+    --peft_model_id ${output_model_path}"/checkpoint-100/"
     --clean_out_path ${output_model_path}"/test_clean.txt"
     --other_out_path ${output_model_path}"/test_other.txt"
     --num_threads ${gpu_num}"

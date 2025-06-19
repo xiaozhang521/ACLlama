@@ -13,7 +13,8 @@ export DISABLE_TORCH_COMPILE=1
 export NCCL_DEBUG=INFO
 export TORCH_DISTRIBUTED_DEBUG=DETAIL
 
-output_tag="../ACLlama_output/whisper-large-v3-and-Llama-3.2-3B-align"
+# output_tag="../ACLlama_output/whisper-large-v3-and-Llama-3.2-3B-align"
+output_tag="../ACLlama_output/whisper-large-v3-and-Llama-3.2-3B-cross-attn-align"
 
 export ASCEND_VISIBLE_DEVICES=${device}
 export ASCEND_DEVICE_ID=${device}
@@ -25,14 +26,14 @@ cmd="torchrun
     --master_port 6601
     finetune_acllama_npu.py
     --audio_model_name_or_path "/data/s50042884/huggingface_model/whisper-large-v3"
-    --text_model_name_or_path "/data/s50042884/my_code/ACLlama_output/ACLlama_finetune_whisper"
+    --text_model_name_or_path "/data/s50042884/my_code/ACLlama_output/ACLlama_alignment"
     --data_path "/data/s50042884/huggingface_model/libri_train_update.json"
     --output_dir ${output_tag}
     --num_train_epochs 40
     --fp16 True
-    --per_device_train_batch_size 4
+    --per_device_train_batch_size 2
     --per_device_eval_batch_size 1
-    --gradient_accumulation_steps 64
+    --gradient_accumulation_steps 128
     --evaluation_strategy "no"
     --save_strategy "steps"
     --save_steps 100

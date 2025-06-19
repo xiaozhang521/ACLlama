@@ -91,25 +91,25 @@ def process_items(thread_id, subset, args, CONFIG, return_dict):
         quantization_config=quantization_config,
     )
     
-    import glob
-    from safetensors.torch import load_file
-    shard_files = sorted(glob.glob(os.path.join(args.peft_model_id, "adapter_model-*.safetensors")))
-    if not shard_files:
-        shard_files = sorted(glob.glob(os.path.join(args.peft_model_id, "adapter_model.safetensors")))
-    need_combined_weights = {}
-    for shard in shard_files:
-        shard_state = load_file(shard)
-        need_combined_weights.update(shard_state)
-    print(f"need_combined_weights is : {need_combined_weights.keys()}")
-    # new_sd = {}
-    # for k, v in need_combined_weights.items():
-    #     if ".lora_A.weight" in k and ".default" not in k:
-    #         k = k.replace(".lora_A.weight", ".lora_A.default.weight")
-    #     if ".lora_B.weight" in k and ".default" not in k:
-    #         k = k.replace(".lora_B.weight", ".lora_B.default.weight")
-    #     new_sd[k] = v
-
-    # torch.save(new_sd, os.path.join(args.peft_model_id, "adapter_model/patched.bin"))
+    # import glob
+    # from safetensors.torch import load_file
+    # shard_files = sorted(glob.glob(os.path.join(args.peft_model_id, "adapter_model-*.safetensors")))
+    # if not shard_files:
+    #     shard_files = sorted(glob.glob(os.path.join(args.peft_model_id, "adapter_model.safetensors")))
+    # need_combined_weights = {}
+    # for shard in shard_files:
+    #     shard_state = load_file(shard)
+    #     need_combined_weights.update(shard_state)
+    # print(f"need_combined_weights is : {need_combined_weights.keys()}")
+    
+    # # new_sd = {}
+    # # for k, v in need_combined_weights.items():
+    # #     if ".lora_A.weight" in k and ".default" not in k:
+    # #         k = k.replace(".lora_A.weight", ".lora_A.default.weight")
+    # #     if ".lora_B.weight" in k and ".default" not in k:
+    # #         k = k.replace(".lora_B.weight", ".lora_B.default.weight")
+    # #     new_sd[k] = v
+    # # torch.save(new_sd, os.path.join(args.peft_model_id, "adapter_model/patched.bin"))
     
     for module in model.model.audio_tower:
         module.to(device)
