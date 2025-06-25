@@ -38,17 +38,14 @@ CUDA_VISIBLE_DEVICES=6 \
 # #--text_model_name_or_path "/mnt/user/zhangyuhao/LLM/llama3-instruct/llama3_1-8B/" \
 
 
-
-# --output_dir "../ACLlama_output/ACLlama_load_pretrained_encoder_only_adapter" \
-
 python3 dump_model.py \
 --audio_model_name_or_path "/data/s50042884/huggingface_model/whisper-large-v3" \
 --text_model_name_or_path "/data/s50042884/huggingface_model/Llama-3.2-3B" \
 --data_path "/data/s50042884/huggingface_model/libri_train_update.json" \
---fp16 True \
---output_dir "../ACLlama_output/ACLlama_load_pretrained_encoder" \
---num_train_epochs 20 \
---per_device_train_batch_size 2 \
+--bf16 True \
+--output_dir "../ACLlama_output/ACLlama_model_ori_zhang_wo_asr_head" \
+--num_train_epochs 40 \
+--per_device_train_batch_size 32 \
 --per_device_eval_batch_size 1 \
 --gradient_accumulation_steps 8 \
 --evaluation_strategy "no" \

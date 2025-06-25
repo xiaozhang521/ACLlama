@@ -23,10 +23,6 @@ from transformers import BitsAndBytesConfig
 # from ACLlama import ACLlamaForCausalLM
 from ACLlama_el import ACLlamaForCausalLM
 
-#######
-import torch.nn as nn
-#######
-
 IGNORE_TOKEN_ID = LabelSmoother.ignore_index
 
 
@@ -414,8 +410,19 @@ def train():
 
     #torch.nn.init.xavier_uniform_(model.get_model().conv1.weight)
     #torch.nn.init.xavier_uniform_(model.get_model().conv2.weight)
-    torch.nn.init.xavier_uniform_(model.get_model().mm_projector1.weight, gain=1.0)
+    torch.nn.init.xavier_uniform_(model.get_model().mm_projector1.weight)
     # torch.nn.init.xavier_uniform_(model.get_model().mm_projector2.weight)
+    
+    def init_weights(m):
+        if isinstance(m, torch.nn.Linear):
+            torch.nn.init.xavier_uniform_(m.weight, gain=1.0)
+            if m.bias is not None:
+                torch.nn.init.zeros_(m.bias)
+        elif isinstance(m, torch.nn.LayerNorm):
+            torch.nn.init.ones_(m.weight)
+            torch.nn.init.zeros_(m.bias)
+
+    model.get_model().asr_transformer_encoder.apply(init_weights)
     
     #update embeddings
     embeddings=model.get_input_embeddings()
@@ -426,33 +433,10 @@ def train():
     new_head = torch.nn.Linear(config.hidden_size, config.vocab_size+1, bias=False)
     new_head.weight.data[ : config.vocab_size] = model.lm_head.weight.data
     model.lm_head = new_head
-    
-    #######
-    import copy
-    model.audio_feature_head = copy.deepcopy(new_head)
-    model.model.audio_feature_head = copy.deepcopy(new_head)
-    
-    def init_weights(m):
-        if isinstance(m, torch.nn.Linear):
-            torch.nn.init.xavier_uniform_(m.weight, gain=1.0)
-            if m.bias is not None:
-                torch.nn.init.zeros_(m.bias)
-        elif isinstance(m, torch.nn.LayerNorm):
-            torch.nn.init.ones_(m.weight)
-            torch.nn.init.zeros_(m.bias)
-    # def init_weights(module, std=0.02):
-    #     if isinstance(module, nn.Linear):
-    #         module.weight.data.normal_(mean=0.0, std=std)
-    #         if module.bias is not None:
-    #             module.bias.data.zero_()
-    #     elif isinstance(module, nn.Embedding):
-    #         module.weight.data.normal_(mean=0.0, std=std)
-    #         if module.padding_idx is not None:
-    #             module.weight.data[module.padding_idx].zero_()
 
-    model.get_model().asr_transformer_encoder.apply(init_weights)
-    # model.get_model().text_projector.apply(init_weights)
-    #######
+    # import copy
+    # model.audio_feature_head = copy.deepcopy(new_head)
+    # model.model.audio_feature_head = copy.deepcopy(new_head)
 
     config.vocab_size+=1
     model.config.vocab_size+=1
@@ -474,16 +458,12 @@ def train():
     data_module = make_supervised_data_module(
         tokenizer=tokenizer, data_args=data_args, max_len=training_args.model_max_length, audio_processor_path=model_args.audio_model_name_or_path
     )
-    # audio_config = model.get_model().audio_tower[0].config
-    audio_config = model.get_model().audio_tower.config
+    audio_config = model.get_model().audio_tower[0].config
     #audio_config.audio_patch_token = tokenizer.convert_tokens_to_ids([DEFAULT_AUDIO_PATCH_TOKEN])[0]
     #audio_config.audio_start_token, audio_config.audio_end_token = tokenizer.convert_tokens_to_ids([DEFAULT_AUDIO_START_TOKEN, DEFAULT_AUDIO_END_TOKEN])
     audio_config.audio_patch_token = tokenizer.get_vocab()["<audio_patch>"]
 
-    print(f"model is : {model}")
-
     model.save_pretrained(training_args.output_dir)
-    model.config.save_pretrained(training_args.output_dir)
     tokenizer.save_pretrained(training_args.output_dir)
     #if training_args.use_lora:
     #    if is_chat_model:
